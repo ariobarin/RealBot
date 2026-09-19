@@ -17,6 +17,10 @@ This plan makes one interpretation explicit: "the robot says every action" means
 that it announces every meaningful state transition, command, and physical
 action. It does not narrate individual sensor frames or controller updates.
 
+The concrete MVP contracts for motion ownership, disconnects, synchronized
+point capture, realtor-confirmed testing, and demo security are specified in
+[`MVP_EDGE_GAP_PATCHES.md`](MVP_EDGE_GAP_PATCHES.md).
+
 ## 2. Fixed product rules
 
 - Setup is realtor-only and is available only after a SLAM scan is complete and

@@ -19,6 +19,9 @@ Credentials belong in local environment variables or ignored `.env` files.
 
 ## Planning references
 
+- [`docs/MVP_EDGE_GAP_PATCHES.md`](docs/MVP_EDGE_GAP_PATCHES.md) turns the five
+  cross-cutting MVP gaps into concrete runtime behavior, protocol changes, and
+  acceptance checks.
 - [`docs/INTERACTABLES_SETUP_PLAN.md`](docs/INTERACTABLES_SETUP_PLAN.md) defines
   the post-SLAM realtor workflow for following, bare-hand point capture, spoken
   labeling, narrated physical testing, persistence, and web visualization.
