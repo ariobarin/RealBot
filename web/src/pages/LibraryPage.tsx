@@ -1,81 +1,84 @@
 import { motion } from 'framer-motion'
-import { Eye, LogOut, Radio } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { MapPinIcon } from '../components/icons/MapPinIcon'
+import { HouseIcon } from '../components/icons/HouseIcon'
 import { LibraryGrid, LibraryGridSkeleton } from '../components/library/LibraryGrid'
 import { Button } from '../components/ui/Button'
-import { PageShell, Wordmark } from '../components/ui/PageShell'
-import { fadeUp } from '../lib/motion'
+import { TopNav } from '../components/ui/TopNav'
+import { fadeUp, pageVariants } from '../lib/motion'
 import { useMapsStore } from '../store/useMapsStore'
-import { useAuth } from '../auth/useAuth'
 
+/** `/realtor` — Manage spaces → Your spaces. */
 export function LibraryPage() {
   const navigate = useNavigate()
-  const { logout } = useAuth()
   const { status, maps, error, load } = useMapsStore()
   useEffect(() => {
     void load()
   }, [load])
 
-  const previewUser = () => {
-    const room = localStorage.getItem('realbot-room') || 'demo-bot'
-    void navigate(`/user/${encodeURIComponent(room)}`)
-  }
-
   return (
-    <PageShell wide>
-      <header className="flex items-center justify-between">
-        <Wordmark />
-        <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" onClick={previewUser}>
-            <Eye size={16} /> Preview user view
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() =>
-              void navigate(
-                `/realtor/control/${encodeURIComponent(localStorage.getItem('realbot-room') || 'demo-bot')}`,
-              )
-            }
-          >
-            <Radio size={16} /> Open robot dashboard
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              void logout()
-              void navigate('/')
-            }}
-          >
-            <LogOut size={16} /> Sign out
-          </Button>
-        </div>
-      </header>
+    <motion.main variants={pageVariants} initial="initial" animate="enter" exit="exit" className="min-h-dvh">
+      <TopNav />
 
-      <motion.section variants={fadeUp} initial="hidden" animate="show" className="mt-12 mb-8">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-brand">Realtor dashboard</p>
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Your spaces</h1>
-        <p className="mt-2 text-ink-2">Floor plans scanned by your bracketbot, ready to share.</p>
-      </motion.section>
-
-      {status === 'ready' && <LibraryGrid maps={maps} />}
-      {(status === 'idle' || status === 'loading') && <LibraryGridSkeleton />}
-      {status === 'error' && (
-        <div role="alert" className="rounded-2xl border border-line p-8 text-center">
-          <p className="font-semibold">Couldn't load your spaces</p>
-          <p className="mt-1 text-sm text-ink-2">{error}</p>
-          <Button
-            variant="secondary"
-            className="mt-4"
-            onClick={() => {
-              useMapsStore.setState({ status: 'idle' })
-              void load()
-            }}
-          >
-            Try again
+      <div className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 sm:px-10">
+        <motion.div
+          variants={fadeUp}
+          initial="hidden"
+          animate="show"
+          className="flex flex-wrap items-center justify-between gap-4"
+        >
+          <h1 className="text-[32px] font-extrabold tracking-[-0.03em] sm:text-[36px]">Your spaces</h1>
+          <Button onClick={() => void navigate('/onboard')}>
+            <Plus size={16} strokeWidth={2.4} /> Add a space
           </Button>
+        </motion.div>
+
+        <div className="mt-7">
+          {status === 'ready' && <LibraryGrid maps={maps} />}
+          {(status === 'idle' || status === 'loading') && <LibraryGridSkeleton />}
+          {status === 'error' && (
+            <div role="alert" className="rounded-2xl border border-line p-8 text-center">
+              <p className="font-semibold">Couldn't load your spaces</p>
+              <p className="mt-1 text-sm text-ink-2">{error}</p>
+              <Button
+                variant="secondary"
+                className="mt-4"
+                onClick={() => {
+                  useMapsStore.setState({ status: 'idle' })
+                  void load()
+                }}
+              >
+                Try again
+              </Button>
+            </div>
+          )}
         </div>
-      )}
-    </PageShell>
+
+        <section aria-label="How it works" className="mt-14 grid gap-6 sm:grid-cols-2">
+          <div className="icon-hover flex items-start gap-4 rounded-[20px] bg-bg-soft p-5">
+            <HouseIcon size={64} />
+            <div className="min-w-0">
+              <p className="text-[15px] font-bold">Scan once, tour forever</p>
+              <p className="mt-1 text-[14px] leading-relaxed text-ink-2">
+                Set the bracketbot inside the front door and press Start. It maps the whole floor on its own;
+                the plan shows up here when it's done.
+              </p>
+            </div>
+          </div>
+          <div className="icon-hover flex items-start gap-4 rounded-[20px] bg-bg-soft p-5">
+            <MapPinIcon size={64} />
+            <div className="min-w-0">
+              <p className="text-[15px] font-bold">Share a space two ways</p>
+              <p className="mt-1 text-[14px] leading-relaxed text-ink-2">
+                Open a space to copy its access code for a private tour, or make it public and it appears
+                under Open tours for anyone to walk.
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </motion.main>
   )
 }
