@@ -4,9 +4,14 @@ Realtor-facing frontend for RealBot: a library of SLAM-scanned spaces, an onboar
 flow for the bracketbot, and a 3D map viewer. Vite + React + TypeScript, Tailwind, Framer Motion,
 Zustand. Design rules are in [`docs/TASTE.md`](docs/TASTE.md).
 
-Current state (Sprints 0–3): library page with the preset SLAM map; **Add a space** opens the
-`/onboard` flow (4 instruction steps, simulated 2 s pairing → Start → preset map); `/map/:id` is
-a placeholder.
+Current state: the library contains two preset SLAM maps; **Add a space** opens the `/onboard`
+flow (4 instruction steps, simulated 2 s pairing → Start); `/map/:id` renders the selected grid
+in 2D/3D and supports local mock waypoint markers. Pairing, robot state, and commands remain
+simulated: the application is not connected to a physical robot or BracketBot Cloud.
+
+Non-authoritative notes about the current prototype, the immediate hackathon relay, and a
+possible later remote camera/control architecture are in
+[`../docs/REMOTE_CONTROL_DIRECTION.md`](../docs/REMOTE_CONTROL_DIRECTION.md).
 
 ## Run
 
