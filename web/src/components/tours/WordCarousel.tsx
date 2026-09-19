@@ -5,13 +5,16 @@ import { PLACE_WORDS } from '../../lib/openTours'
 
 const TINTS = ['var(--brand)', 'var(--arches)', 'var(--babu)', 'var(--plum)', 'var(--gold)', 'var(--ink)']
 
-const HOLD_MS = 1600
-const MOVE_S = 0.5
+const HOLD_MS = 900
+const MOVE_S = 0.32
+/** Window height as a multiple of the row: 1 = only the live word, 3 = full picker wheel. */
+const WINDOW = 1.5
 
 /**
- * Picker-wheel word carousel: three rows visible, the middle word live, the
- * neighbours fading into the page. Slides up one row per word and loops
- * seamlessly (the first word is repeated at the end, then we snap back).
+ * Word carousel: the live word sits in a window just taller than one row, so
+ * only a sliver of the previous and next words peeks in above and below,
+ * faded into the page. Slides up one row per word and loops seamlessly (the
+ * first word is repeated at the end, then we snap back).
  */
 export function WordCarousel({
   words = PLACE_WORDS,
@@ -46,18 +49,18 @@ export function WordCarousel({
     return () => window.cancelAnimationFrame(id)
   }, [snap])
 
-  const visible = 3
-  const fade = Math.round(row * 0.9)
+  const height = Math.round(row * WINDOW)
+  const fade = Math.round((height - row) / 2 + row * 0.12)
 
   return (
     <span
       className={`relative inline-block overflow-hidden align-middle ${className}`}
-      style={{ height: row * visible }}
+      style={{ height }}
       aria-live="off"
     >
       <motion.span
         className="block"
-        style={{ paddingTop: row }}
+        style={{ paddingTop: (height - row) / 2 }}
         animate={{ y: -index * row }}
         transition={snap ? { duration: 0 } : { duration: MOVE_S, ease: EASE_OUT }}
       >
@@ -75,12 +78,12 @@ export function WordCarousel({
       <span
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0"
-        style={{ height: fade, background: 'linear-gradient(to bottom, var(--bg) 15%, transparent)' }}
+        style={{ height: fade, background: 'linear-gradient(to bottom, var(--bg) 35%, transparent)' }}
       />
       <span
         aria-hidden
         className="pointer-events-none absolute inset-x-0 bottom-0"
-        style={{ height: fade, background: 'linear-gradient(to top, var(--bg) 15%, transparent)' }}
+        style={{ height: fade, background: 'linear-gradient(to top, var(--bg) 35%, transparent)' }}
       />
     </span>
   )

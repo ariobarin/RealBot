@@ -116,5 +116,5 @@ move on hover**, triggered by an `.icon-hover` ancestor:
 | `KeyRingIcon` | hangs and swings            | big swing, tag jingles           | Realtor sign in                |
 
 Small UI glyphs (arrows, chevrons, close) stay lucide. The Tours hero also has the one large
-motion on that page: `WordCarousel`, a three-row picker wheel of place types (1.6 s hold, 0.5 s
-move, six tints). Nothing else on the page should compete with it.
+motion on that page: `WordCarousel`, a three-row picker wheel of place types (0.9 s hold, 0.32 s
+move, six tints, a window 1.5 rows tall). Nothing else on the page should compete with it.
