@@ -74,9 +74,10 @@ test('visitor portal opens a tour and keeps realtor pages inaccessible', async (
   ])
   expect(pageHeight).toBeLessThanOrEqual(viewportHeight)
 
+  // Manage spaces is realtor-only: a visitor is sent to the sign-in gate, not into the dashboard.
   await page.goto('/realtor')
-  await expect(page).toHaveURL('/user/hack-room')
-  await expect(page.getByRole('link', { name: /Realtor dashboard/ })).toHaveCount(0)
+  await expect(page).toHaveURL('/signin')
+  await expect(page.getByRole('heading', { name: 'Realtor sign in' })).toBeVisible()
 })
 
 test('realtor dashboard can enter the exact user view', async ({ page }) => {

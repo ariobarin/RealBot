@@ -27,7 +27,7 @@ export function MapPage() {
       <header className="flex items-center justify-between">
         <Wordmark />
         <Link
-          to="/"
+          to="/realtor"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-2 no-underline hover:text-ink"
         >
           <ArrowLeft size={16} /> Your spaces
@@ -70,7 +70,7 @@ export function MapPage() {
                 >
                   Try again
                 </Button>
-                <Link to="/" className="no-underline">
+                <Link to="/realtor" className="no-underline">
                   <Button variant="ghost">Back to your spaces</Button>
                 </Link>
               </div>
