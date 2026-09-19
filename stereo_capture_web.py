@@ -106,7 +106,7 @@ def capture(req: Req):
     first, second = frame[:, :mid], frame[:, mid:]
     left, right = (second, first) if req.swap else (first, second)
 
-    png = [cv2.IMWRITE_PNG_COMPRESSION, 0]
+    png = [cv2.IMWRITE_PNG_COMPRESSION, 1]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
     shots[ts] = tuple(cv2.imencode(".png", eye, png)[1].tobytes()
                       for eye in (left, right))
@@ -199,7 +199,7 @@ async def index():
           if (e.key !== 'Enter' || busy) return;
           e.preventDefault();
           busy = true;
-          // Drop the stream so the ~7MB of png has the link to itself; a
+          // Drop the stream so the ~3MB of png has the link to itself; a
           // live mjpeg connection and the transfer otherwise starve each other.
           const feed = document.getElementById('feed');
           feed.src = '';

@@ -4,44 +4,34 @@
 #   "bbos",
 #   "numba",
 #   "numpy",
+#   "scipy",
 #   "pillow",
 #   "fastapi",
 #   "uvicorn",
 #   "websockets",
-#   "scipy",
+#   "pyyaml",
 #   "opencv-python-headless",
 # ]
 # [tool.uv.sources]
 # bbos = { path = "/home/bracketbot/bbos", editable = true }
 # ///
-"""reloc_nav — waypoint navigation on a given (relocalized) map.
-
-The robot localizes into a pre-built map via QR portals (p_slam daemon) and navigates it:
-waypoint patrols (with optional final heading), frontier mode (plan anywhere on the given map
-with live obstacles overlaid), manual teleop, and a 3D web UI on :8010.
-
-Inputs:  slam.pose (map-frame pose), mapping.grid2d / mapping.voxels (live traversability)
-Output:  drive.ctrl (twist)
-Map artifacts (per map, in ~/bbapps/nav/maps/): map_cloud.npz, <name>_cloud_nav.npz,
-auki_nav_grid_<name>.npz; portal registry lives with the p_slam daemon.
-"""
+"""Navigation UI: submit routes to nav.command and display BBOS telemetry."""
 import asyncio
 import ctypes
+import hashlib
+import io
 import json
 import math
-import os
-import shutil
 import signal
 import socket
 import struct
-import subprocess
 import sys
 import threading
 import time
 import zlib
 from pathlib import Path
 from queue import Queue, Empty
-
+# I don't get why this is needed. A/B needed.
 try:                        # glibc's default arena retains freed memory instead of returning it
     _libc = ctypes.CDLL("libc.so.6")    # to the OS — voxel_loop's periodic large-array frees left
     _libc.mallopt(-3, 131072)           # RSS permanently elevated. Route allocations >=128KB
@@ -51,262 +41,59 @@ except Exception:                       # threshold (M_TRIM_THRESHOLD) so they'r
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+import yaml
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response
 from numba import njit
-from scipy.ndimage import uniform_filter, distance_transform_edt, label
+from scipy.ndimage import distance_transform_edt
 
 from bbos import Writer, Reader, Config, Type
-from reloc_planner import (
-    MIN_V_FRAC, STATE_INTERVAL, _INF, _HEAP_CAP,
-    quat_yaw, w2g, g2w,
-    _dijkstra_backward, _extract_path_jit, _warmup_jit,
-)
+from bbos.daemons.nav import constants as nav_constants
 
-CFG_M = Config('mapping')
-
-import reloc_geom as G            # COLMAP/GL map -> z-up nav frame + floor fit
-
-# --- Live depth-camera point cloud (raw depth frames, unprojected client-side) ---
-# The depth daemon already publishes a pre-projected camera.points, but sending raw depth and
-# unprojecting on the client is deliberately different: depth images compress far better than
-# XYZ float triples (spatially smooth vs effectively-random bit patterns), and doing the
-# unprojection on the client's GPU costs the robot's CPU nothing — the opposite of computing
-# points here and shipping them.
-depth_calib = None   # {'fx','fy','cx','cy','w','h','T_base_cam'} — computed once in main()
-_depth_imu = {'ref': None, 'idx': 0, 'sign': 1.0, 'lim': 0.0, 'drive_sign': -1.0}   # live-pitch tracking (see depth_loop)
+CFG_M = Config("mapping")
+CFG_BASE = Config("base")
+STATE_INTERVAL = Type("nav_state")()[1] / 1000.0
 
 
-def compute_depth_calib():
-    """Depth-camera intrinsics + camera->base extrinsic, computed the same way the depth
-    daemon computes them (bbos/daemons/depth/daemon.py) so the client can unproject raw
-    camera.depth frames itself. Values verified empirically against a live depth frame before
-    this was written (fx=161.5 fy=137.0 cx=354.5 cy=197.4 for the 640x384 rectified output;
-    depth values are uint16 millimeters)."""
+def  compute_depth_calib():
+    """Parse depth calibration matrix.
+    
+   [ fx 0 cx Tx] 
+   [ 0 fy cy 0 ]
+   [ 0 0  1  0 ]
+    """
+    
     CFG_C = Config("cam_head")
     CFG_D = Config("depth")
-    (mtx_l, dist_l, mtx_r, dist_r, R1, R2, P1_cam, P2_cam,
-     Q, baseline_m, fx_ds, R, t) = CFG_D.camera_cal()
+    
+    (mtx_l, dist_l, mtx_r, dist_r, R1, R2, P1_cam, P2_cam, Q, baseline_m, fx_ds, R, t) = CFG_D.camera_cal()
+    base_from_cam = CFG_D.T_base_cam.mat()
+    
     src_w, src_h = CFG_C.width // 2, CFG_C.height
     dst_w, dst_h = CFG_D.width_D, CFG_D.height_D
     scale_x, scale_y = dst_w / src_w, dst_h / src_h
-    P1_ds = P1_cam.copy(); P1_ds[0, :] *= scale_x; P1_ds[1, :] *= scale_y
-    crop = getattr(CFG_D, 'rect_crop', 0)   # folded into the rectify maps on robots that use it (023); absent on e.g. 091 -> the crop math degenerates to a no-op
-    cx_ds = P1_ds[0, 2]; fy_ds = P1_ds[1, 1]; cy_ds = P1_ds[1, 2]
-    uncropped_h = dst_h - 2 * crop
-    fy_final = fy_ds * dst_h / uncropped_h
-    cy_final = (cy_ds - crop) * dst_h / uncropped_h
-    # Extrinsic comes from whichever daemon actually OWNS camera.depth on this robot: on
-    # bb-023 that's depth_b (l_narrow), whose height/pitch/roll differ from the stock depth
-    # daemon's baked-in matrix (1.20m/60deg/1deg roll vs 1.50m/35deg/none) — using the stock
-    # one projected the cloud at a visibly wrong heading. Intrinsics deliberately stay on the
-    # stock camera_cal() derivation above: depth_b's 640x384 output keeps the stock rectified
-    # contract, and mapping_v1 (consuming this same topic) derives intrinsics the same way.
-    # Extrinsic + range gates come from whichever config family the daemon that OWNS
-    # camera.depth actually uses: on 023 depth_b registers its own; on 091 the depth_b daemon
-    # borrows depth_custom's configs (its constants.py registers nothing); stock depth is the
-    # last resort. First config that exists wins. The gates ship to the client so the viz
-    # drops the same pixels the daemon's own point pipeline does (confidence/validity zeros
-    # are already baked into the image; max_depth and the horizontal base-frame max_radius
-    # are points-stage cuts the client replicates).
-    cands = []
-    for _name in ("depth_b", "depth_custom", "depth"):
-        try:
-            _c = Config(_name)
-            cands.append((_name, _c.T_base_cam.mat(),
-                          float(getattr(_c, 'max_depth_m', 5.0)),
-                          float(getattr(_c, 'max_radius_m', 0.0) or 0.0)))
-        except Exception:
-            continue
-    if not cands:
-        raise RuntimeError("no depth config with T_base_cam found")
-    name, T_bc, max_d, max_r = cands[0]
-    fx, fy, cx, cy = fx_ds, fy_final, cx_ds, cy_final
-
-    # --- Data-driven self-calibration against the daemon's OWN output ---
-    # The config-derived intrinsics above assume the daemon rectifies the way the stock
-    # pipeline does — which broke the moment a reflash changed the daemon's internals
-    # (measured live on 091: 0.78m mean disagreement, the whole cloud sat ~0.5m too far
-    # forward). camera.points carries the ground truth: mask indexes the depth image, so
-    # (pixel, depth) -> base-frame point pairs let us fit fx/fy/cx/cy per axis linearly and
-    # pick whichever candidate extrinsic minimizes pixel residual. Whatever the daemon
-    # actually does, this matches it by construction. Falls back to config-derived values
-    # when the depth daemon isn't publishing (e.g. viz-only sessions).
-    try:
-        # Accumulate pairs across SEVERAL distinct frames: a single frame can be degenerate
-        # (facing one flat wall -> the per-axis fit goes ill-conditioned; seen live as a 9.7px
-        # fit that had to be rejected). Points are BASE-frame (robot-relative), so the
-        # pixel->point mapping is identical every frame and frames pool cleanly even while
-        # the robot is driving. SAME-FRAME pairing per sample is still load-bearing: both
-        # topics publish from one internal frame with an identical timestamp.
-        _packs = []
-        _last_ts = None
-        with Reader("camera.depth", keeptime=False) as _rd, \
-             Reader("camera.points", keeptime=False) as _rp:
-            _t0 = time.time()
-            while time.time() - _t0 < 6.0 and len(_packs) < 6:
-                if _rd.ready() and _rp.ready():
-                    _ts = _rd.data['timestamp']
-                    if _ts == _rp.data['timestamp'] and _ts != _last_ts:
-                        _n = int(_rp.data['num_points'])
-                        if _n > 500:
-                            _last_ts = _ts
-                            _packs.append((_rd.data['depth'].copy(),
-                                           _rp.data['points'][:_n].astype(np.float64),
-                                           _rp.data['mask'][:_n].copy()))
-                time.sleep(0.05)
-        depth_img = _packs[0][0] if _packs else None
-        if depth_img is not None:
-            H, W = depth_img.shape
-            dst_w, dst_h = W, H          # trust the LIVE image shape over config math
-            _rng = np.random.default_rng(0)
-            _us = []; _vs = []; _zs = []; _Ps = []
-            for _dimg, _Pp, _Mm in _packs:
-                _idx = _rng.choice(len(_Pp), min(3000, len(_Pp)), replace=False)
-                _m = _Mm[_idx]
-                _uu = (_m % W).astype(np.float64); _vv = (_m // W).astype(np.float64)
-                _zz = _dimg[(_m // W), (_m % W)].astype(np.float64) / 1000.0
-                _ok = _zz > 0.15
-                _us.append(_uu[_ok]); _vs.append(_vv[_ok]); _zs.append(_zz[_ok]); _Ps.append(_Pp[_idx][_ok])
-            _u = np.concatenate(_us); _v = np.concatenate(_vs)
-            _z = np.concatenate(_zs); _P = np.concatenate(_Ps)
-            best = None
-            for _nm, _T, _md, _mr in cands:
-                _c = (_P - _T[:3, 3]) @ _T[:3, :3]        # R^T (P - t), row-wise
-                _zz = _c[:, 2]
-                _g = _zz > 0.15
-                if _g.sum() < 200:
-                    continue
-                _a = _c[_g, 0] / _zz[_g]; _b = _c[_g, 1] / _zz[_g]
-                _A = np.stack([_a, np.ones_like(_a)], 1)
-                _fx, _cx = np.linalg.lstsq(_A, _u[_g], rcond=None)[0]
-                _B = np.stack([_b, np.ones_like(_b)], 1)
-                _fy, _cy = np.linalg.lstsq(_B, _v[_g], rcond=None)[0]
-                _res = float(np.hypot(_A @ [_fx, _cx] - _u[_g], _B @ [_fy, _cy] - _v[_g]).mean())
-                if best is None or _res < best[0]:
-                    best = (_res, _nm, _fx, _fy, _cx, _cy, _T, _md, _mr)
-            if best is not None and best[0] < 3.0:
-                _res, name, fx, fy, cx, cy, T_bc, max_d, max_r = best
-                # Rigid residual refinement: a per-axis pinhole fit can't absorb a leftover
-                # rotation/translation between the assumed extrinsic and the daemon's real one
-                # (seen live on 091 as a persistent +0.2m lateral bias — the wheel-mask blob
-                # rendered off-center). Kabsch-align our reprojection onto the daemon's points
-                # (outlier-trimmed so the edge-pixel range tail can't steer it), fold the
-                # correction into T_base_cam, then refit K once in the corrected frame.
-                _Rc = np.eye(3); _tc = np.zeros(3)
-                for _it in range(2):
-                    _xc = (_u - cx) * _z / fx; _yc = (_v - cy) * _z / fy
-                    _cam = np.stack([_xc, _yc, _z], 1)
-                    _est = _cam @ T_bc[:3, :3].T + T_bc[:3, 3]
-                    _e = np.linalg.norm(_est - _P, axis=1)
-                    _k = _e < max(0.3, 3 * float(np.median(_e)))
-                    if _k.sum() < 200:
-                        break
-                    _ma = _est[_k].mean(0); _mb = _P[_k].mean(0)
-                    _Hm = (_est[_k] - _ma).T @ (_P[_k] - _mb)
-                    _U, _S, _Vt = np.linalg.svd(_Hm)
-                    _Rc = _Vt.T @ _U.T
-                    if np.linalg.det(_Rc) < 0:
-                        _Vt[-1] *= -1; _Rc = _Vt.T @ _U.T
-                    _tc = _mb - _Rc @ _ma
-                    _Tc = np.eye(4); _Tc[:3, :3] = _Rc; _Tc[:3, 3] = _tc
-                    T_bc = _Tc @ T_bc
-                    _c2 = (_P - T_bc[:3, 3]) @ T_bc[:3, :3]
-                    _zz2 = _c2[:, 2]; _g2 = _zz2 > 0.15
-                    if _g2.sum() < 200:
-                        break
-                    _a2 = _c2[_g2, 0] / _zz2[_g2]; _b2 = _c2[_g2, 1] / _zz2[_g2]
-                    _A2 = np.stack([_a2, np.ones_like(_a2)], 1)
-                    fx, cx = np.linalg.lstsq(_A2, _u[_g2], rcond=None)[0]
-                    _B2 = np.stack([_b2, np.ones_like(_b2)], 1)
-                    fy, cy = np.linalg.lstsq(_B2, _v[_g2], rcond=None)[0]
-                _ang = math.degrees(math.acos(max(-1.0, min(1.0, (float(np.trace(_Rc)) - 1) / 2))))
-                print(f"[depth] self-calibrated+refined: fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f} "
-                      f"rigid dR={_ang:.2f}deg dt=({_tc[0]:+.3f},{_tc[1]:+.3f},{_tc[2]:+.3f})m "
-                      f"(extrinsic: {name})", flush=True)
-            else:
-                print(f"[depth] self-calibration fit poor ({best[0]:.1f}px) — keeping config-derived intrinsics"
-                      if best else "[depth] self-calibration: not enough valid pairs — keeping config-derived",
-                      flush=True)
-        else:
-            print("[depth] camera.points not publishing — using config-derived intrinsics", flush=True)
-    except Exception as _e:
-        print(f"[depth] self-calibration skipped ({_e}) — using config-derived intrinsics", flush=True)
-
-    # Arm live IMU-pitch tracking: the daemon post-multiplies its camera_to_base by
-    # rot(-X, lean-delta-from-ITS-startup) every frame (balancing robot). We can't know its
-    # reference lean, but the rigid alignment above already captured the TOTAL offset at this
-    # instant — so tracking our own delta from the lean AT THIS SAME INSTANT composes to the
-    # daemon's live extrinsic exactly (same-axis rotations add). depth_loop reads the IMU and
-    # ships the delta per frame; the client applies the identical composition.
-    try:
-        _ic = None
-        for _nm in ("depth_b", "depth_custom"):
-            try:
-                _cc = Config(_nm)
-                if getattr(_cc, "imu_pitch", 0):
-                    _ic = _cc
-                    break
-            except Exception:
-                continue
-        if _ic is not None:
-            try:
-                _ds = float(Config("drive").sign_pitch)
-            except Exception:
-                _ds = -1.0
-            _depth_imu['idx'] = int(_ic.imu_pitch_idx)
-            _depth_imu['sign'] = float(_ic.imu_pitch_sign)
-            _depth_imu['lim'] = float(_ic.imu_pitch_max_deg)
-            _depth_imu['drive_sign'] = _ds
-            with Reader("imu.orientation", keeptime=False) as _ri:
-                _t0 = time.time()
-                while time.time() - _t0 < 2.0:
-                    if _ri.ready():
-                        _depth_imu['ref'] = _depth_imu['drive_sign'] * float(
-                            np.asarray(_ri.data['rpy'])[_depth_imu['idx']])
-                        break
-                    time.sleep(0.05)
-            if _depth_imu['ref'] is not None:
-                print(f"[depth] live imu-pitch tracking armed (ref={_depth_imu['ref']:+.3f}deg, "
-                      f"idx={_depth_imu['idx']}, lim={_depth_imu['lim']}deg)", flush=True)
-            else:
-                print("[depth] imu.orientation not publishing — pitch tracking off", flush=True)
-    except Exception as _e:
-        print(f"[depth] imu-pitch arm skipped ({_e})", flush=True)
+    
+    P1_ds = P1_cam.copy()
+    P1_ds[0, :] *= scale_x
+    P1_ds[1, :] *= scale_y
+    
+    cx_ds = P1_ds[0, 2]
+    cy_ds = P1_ds[1, 2]
+    fx_ds = P1_ds[0, 0]
+    fy_ds = P1_ds[1, 1]
+    
+    
+    fx, fy, cx, cy = fx_ds, fy_ds, cx_ds, cy_ds
 
     return {
         'fx': float(fx), 'fy': float(fy), 'cx': float(cx), 'cy': float(cy),
         'w': int(dst_w), 'h': int(dst_h),
-        'T_base_cam': [float(x) for x in T_bc.flatten()],   # row-major 4x4
-        'max_d': max_d,                                     # (m) match camera.points' range gate
-        'max_r': max_r,                                     # (m) horizontal base-frame radius cut, 0=off
+        'base_from_cam': [float(x) for x in base_from_cam.flatten()],
+        'max_d': float(CFG_D.max_depth_m),
     }
 
 
-# --- p_slam (Auki reloc) integration ---
-# p_slam publishes slam.pose as the BASE pose in the GL frame (COLMAP->GL via MW), plus the raw
-# odom in vo_pos/vo_quat. We localize/plan in a z-up NAV frame built from the COLMAP
-# floor (T_nav_gl, fit at startup). mapping.voxels are in the odom frame (mapping reads vo_*),
-# so we fold them into the nav frame via T_nav_odom = T_nav_gl @ T_gl_base @ inv(T_odom_base).
-PSLAM_MAP_DIR = Path(__file__).resolve().parent / "maps"   # per-map artifacts live with the app
-FLOOR_BAND = 0.08                 # (m) |z| band around the fitted floor (display-cloud clip)
-
-T_nav_gl = np.eye(4)              # GL -> nav (z-up, floor at z=0); set in main() by the floor fit
-map_clouds = {}                  # single display cloud "map" (nav-frame xyz f32 + rgb u8)
-cloud_source = "map"             # Map button toggles "off" <-> "map"
-cloud_names = []                 # built in main()
-
-# Two planning states: Auki Path Mode ON -> given map's grid fused with live obstacles;
-# OFF -> live mapping.grid2d only. (plan_source stays "floor"; the fuse sits on top.)
-AUKI_GRID_DIR = PSLAM_MAP_DIR
-plan_source = "floor"
-auki_maps = {}                   # name -> (grid uint8 0/1/2, origin float32[2]); nav frame, res = voxel_size_m
-plan_order = ["floor"]           # cycle order, built in main() from the loaded maps
-portals_json = b'[]'             # /portals payload: nav-frame portal markers
-show_nav_map = False             # toggle: overlay the live mapping voxels (the "waypoint nav map")
-
-OBS_INFLATE = 9
-MAX_BROWSER_POINTS = 600000      # hard cap on points sent to the browser (v11-proven)
+show_nav_map = False
 
 # --- v23 voxel delta-streaming params ---
 VOX_KR = float(CFG_M.voxel_size_m) / 2.0   # cell-key resolution (true voxel grid is res/2)
@@ -342,138 +129,55 @@ def teleop_twist(keys, shift, gain):
     R = CFG_DRIVE.robot_width * 0.5
     return (vl + vr) / 2.0, (vr - vl) / (2.0 * R)
 
-# --- Live-tunable controller/planner params ---
-# Edited via UI sliders (applied live). Written/read ONLY when you click Save/Load;
-# nothing touches params.txt automatically. Read fresh every loop iteration.
-PARAMS = {
-    'SPEED':              0.08,     # base forward speed (m/s)
-    'MAX_OMEGA':          0.15,     # angular velocity clamp (rad/s)
-    'LOOKAHEAD':          0.5,     # pure-pursuit lookahead distance (m)
-    'K_CTE':              1.2,     # cross-track error P-gain
-    'K_CTE_D':            0.3,     # cross-track error D-gain (damping)
-    'CTE_SPEED_K':        80.0,    # off-path speed reduction (higher = slower off path)
-    'TURN_SLOW_K':        3.0,     # turning speed reduction (higher = slower when turning)
-    'CLEAR_FULL':         0.6,     # wall clearance (m) at/above which full speed
-    'CLEAR_MIN':          0.3,    # wall clearance (m) at/below which slowest
-    'V_TIGHT_FRAC':       0.4,     # speed floor fraction in tight spaces
-    'ROBOT_RADIUS_CELLS': 10,      # hard inflation radius (cells) — planner
-    'PROX_WEIGHT':        20000.0, # soft wall-repulsion cost weight — planner
-    'REPLAN_INTERVAL':    0.5,     # seconds between periodic replans
-    'SMOOTH_V':           0.5,     # forward velocity low-pass (0..1, higher = snappier)
-    'SMOOTH_W':           0.6,     # angular velocity low-pass (0..1, higher = snappier)
-    'GOAL_TOLERANCE':     0.25,    # arrival radius (m)
-    # --- final heading alignment (turn-in-place at the waypoint, slam_reloc style) ---
-    'HEADING_OMEGA':      0.15,     # constant turn speed for the heading phase (rad/s) — = slam_reloc max_omega
-    'HEADING_TOL':        0.07,    # heading aligned when |error| < this (rad, ~6deg)
-    # --- recovery state machine (all delays tunable) ---
-    'STUCK_TIME':         15.0,    # seconds of no progress before rotating to rescan
-    'ROTATE_TIME':        3.0,     # seconds spent rotating in place per rescan
-    'ROTATE_FRAC':        0.5,     # rescan rotate speed as fraction of MAX_OMEGA
-    'PROGRESS_EPS':       0.1,     # goal-distance drop (m) that counts as progress
-    'N_ROTATIONS':        8,       # rescans before skipping the waypoint (patrol only)
-}
-INT_PARAMS = {'ROBOT_RADIUS_CELLS', 'N_ROTATIONS'}  # stored as int, not float
-PLANNER_PARAMS = {'ROBOT_RADIUS_CELLS', 'PROX_WEIGHT'}  # force replan on change
-PARAMS_FILE = Path(__file__).resolve().parent / "params.txt"
+# The daemon watches this same file for tuning changes.
+PARAMS_FILE = Path(nav_constants.__file__).with_name("params.yaml")
+PARAMS = {}
+INT_PARAMS = {'ROBOT_RADIUS_CELLS', 'N_ROTATIONS'}
 
 
 def save_params_file():
-    with open(PARAMS_FILE, 'w') as f:
-        for k, v in PARAMS.items():
-            f.write(f"{k}={v}\n")
-    print(f"[params] saved -> {PARAMS_FILE}", flush=True)
+    # Keep the existing comments; replace atomically so the daemon never reads half a file.
+    lines = []
+    for line in PARAMS_FILE.read_text().splitlines():
+        key = line.partition(':')[0].strip()
+        if key in PARAMS:
+            comment = line.partition('#')[2]
+            line = f"{key}: {PARAMS[key]}" + (f"  # {comment.strip()}" if comment else "")
+        lines.append(line)
+    pending = PARAMS_FILE.with_suffix(".yaml.tmp")
+    pending.write_text("\n".join(lines) + "\n")
+    pending.replace(PARAMS_FILE)
 
 
 def load_params_file():
-    if not PARAMS_FILE.exists():
-        print(f"[params] no file at {PARAMS_FILE}", flush=True)
-        return False
-    for line in PARAMS_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        k, v = line.split('=', 1)
-        k = k.strip()
-        if k in PARAMS:
-            try:
-                PARAMS[k] = int(round(float(v))) if k in INT_PARAMS else float(v)
-            except ValueError:
-                pass
-    print(f"[params] loaded <- {PARAMS_FILE}", flush=True)
+    global PARAMS
+    PARAMS = yaml.safe_load(PARAMS_FILE.read_text())
     return True
-
-
-# --- Double-buffered planner output ---
-
-class PlannerOutput:
-    """Double-buffered g_cost for lock-free planner->control handoff.
-    Control reads active, planner writes work, swap() flips them.
-    GIL-safe: int assignment is atomic."""
-    __slots__ = ('_bufs', '_idx', 'goal_gi', 'goal_gj', 'passable_count',
-                 'replan_ms', 'dist_field', 'grid', 'origin', 'grid_ready')
-
-    def __init__(self):
-        self._bufs = [None, None]
-        self._idx = 0
-        self.goal_gi = 0
-        self.goal_gj = 0
-        self.passable_count = 0
-        self.replan_ms = 0.0
-        self.dist_field = None   # EDT result for wall-distance diagnostic
-        self.grid = None         # 3-state uint8 grid
-        self.origin = np.zeros(2, dtype=np.float32)
-        self.grid_ready = False
-
-    def ensure_init(self, GS):
-        if self._bufs[0] is None or self._bufs[0].shape[0] != GS:
-            self._bufs[0] = np.full((GS, GS), _INF, dtype=np.float64)
-            self._bufs[1] = np.full((GS, GS), _INF, dtype=np.float64)
-
-    @property
-    def active(self):
-        return self._bufs[self._idx]
-
-    @property
-    def work(self):
-        return self._bufs[1 - self._idx]
-
-    def swap(self):
-        self._idx = 1 - self._idx
-
-
-pout = PlannerOutput()
 
 
 # --- Shared state ---
 
 waypoints = []
-wp_idx = 0
+wp_idx = -1
 patrol_running = False
 patrol_loop = False
-global_mode = False    # go to a single goal over mapped floor; stop at closest reachable cell
-frontier_active = True    # frontier MODE (DEFAULT ON): plan on the given map + live obstacles
-frontier_map = None       # base Auki map of the fused grid (derived from plan_source each tick)
-nav_bounds_corners = None
-show_floor = False
+global_mode = False
+floor_mode = 0  # off, raw, inflated, both
 show_gradient = False
 show_slam_path = False
 DEPTH_MODES = ("off", "normal", "raw")   # RAW = normal + what the filter removed, in red
 show_depth = 0           # live single-frame depth-camera point cloud (replaced every frame,
                           # not accumulated — distinct from the accumulated BBMap/voxel cloud)
 cmd_queue = Queue()
-goal = None          # control writes, planner reads (GIL-safe ref swap)
-robot_status = "idle"
+robot_status = "waiting for nav daemon"
+command_error = ""
+nav_path = []
+resetting = False
+stopping = threading.Event()
 manual_drive = False     # WASD teleop mode (mutually exclusive with autonomous patrol)
-_teleop_keys = ''
-_teleop_shift = False
-_teleop_gain = 100.0
-_teleop_t = 0.0          # time of last teleop command (for dead-man timeout)
-_replan_needed = False
-_vis_dirty = False
 _slam_ready = False
-_shared_pos = np.zeros(3, dtype=np.float32)  # control writes, planner reads
-_map_gen = 0             # bumped on wipe so the browser drops the old cloud + SLAM trail
-_wiping = False          # one wipe at a time
+_shared_pos = np.zeros(3, dtype=np.float32)  # latest SLAM x, y, yaw for the viewer
+_map_gen = 0             # bumped when the mapping grid origin changes
 _rebuild = {'count': 0, 'frame': 0, 'moved': 0, 'emptied': 0, 'filled': 0, 't': 0.0, 'in_progress': False}
 
 # --- Freshness watchdog: empirical logging to tell "SLAM/mapping stalled" apart from
@@ -515,6 +219,7 @@ vox_state = {'cell': None, 'col': None}  # authoritative deduped cloud for keyfr
 # into a CPU spiral; caching makes a resync just replay already-compressed bytes.
 vox_keyframe_cache = [None]
 floor_latest = [None]                  # last floor packet (re-sent to new clients)
+inflated_floor_latest = [None]
 heat_latest = [None]                   # last gradient packet
 depth_latest = [0, None]               # (seq, pkt) — live depth frames are LATEST-ONLY: they
                                        # never enter the per-client queue. Found live: on a weak
@@ -531,30 +236,6 @@ def put_latest(q, val):
         except: pass
         try: q.put_nowait(val)
         except: pass
-
-
-def mask_outside_bounds(passable, corners, origin, inv, GS):
-    if corners is None:
-        return
-    gc = np.array([w2g(c[0], c[1], origin, inv) for c in corners], dtype=np.float64)
-    before = int(passable.sum())
-    cx, cy = gc.mean(axis=0)
-    center_in = True
-    for k in range(4):
-        ax, ay = gc[k]; bx, by = gc[(k + 1) % 4]
-        ex, ey = bx - ax, by - ay
-        if (-ey * (cx - ax) + ex * (cy - ay)) < 0:
-            center_in = False; break
-    sign = 1.0 if center_in else -1.0
-    ii, jj = np.mgrid[:GS, :GS]
-    inside = np.ones((GS, GS), dtype=np.bool_)
-    for k in range(4):
-        ax, ay = gc[k]; bx, by = gc[(k + 1) % 4]
-        ex, ey = bx - ax, by - ay
-        inside &= (sign * (-ey * (ii - ax) + ex * (jj - ay))) >= 0
-    passable[~inside] = False
-    after = int(passable.sum())
-    print(f"[bounds] sign={sign} inside={int(inside.sum())} passable: {before}->{after} masked={before-after} gc={gc.tolist()}", flush=True)
 
 
 def dedup_voxels(coords, colors):
@@ -686,6 +367,7 @@ def _clear_live_cloud():
         vox_state['col'] = None
         vox_keyframe_cache[0] = None
         floor_latest[0] = None
+        inflated_floor_latest[0] = None
         heat_latest[0] = None
         for c in heavy_clients:
             c['resync'][0] = True
@@ -694,77 +376,8 @@ def _clear_live_cloud():
         broadcast_heavy(pkt)
     z = zlib.compress(b'', 1)
     broadcast_heavy(struct.pack('<II', 2, 0) + z)   # empty floor overlay
+    broadcast_heavy(struct.pack('<II', 7, 0) + z)   # empty inflated floor overlay
     broadcast_heavy(struct.pack('<II', 3, 0) + z)   # empty gradient overlay
-
-
-def _daemon_running(name):
-    return subprocess.run(
-        ["pgrep", "-f", f"[d]aemon.py {name}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-
-
-def _stop_daemons(names):
-    root = Path(Config('slam').map_path).resolve().parent.parent.parent
-    for name in names:
-        (root / name / ".stopped").touch()
-        subprocess.run(["pkill", "-f", f"python daemon.py {name}"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    deadline = time.time() + 8.0
-    while time.time() < deadline:
-        if not any(_daemon_running(n) for n in names):
-            return
-        time.sleep(0.2)
-    for name in names:
-        subprocess.run(["pkill", "-9", "-f", f"python daemon.py {name}"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    time.sleep(0.3)
-
-
-def _start_daemons(names):
-    root = Path(Config('slam').map_path).resolve().parent.parent.parent
-    shm = Path("/dev/shm")
-    for name in names:
-        for leftover in shm.glob(f"{name}.*"):
-            leftover.unlink(missing_ok=True)
-        (shm / f"{name}_lock").unlink(missing_ok=True)
-        (root / name / ".stopped").unlink(missing_ok=True)
-    # manager's check_alive() respawns them within ~1s once .stopped is gone
-
-
-def wipe_slam_and_map():
-    """Stop slam+mapping, delete their live maps, restart them into a fresh frame."""
-    global robot_status, _slam_ready, _wiping
-    stopped = False
-    try:
-        robot_status = "wiping SLAM + map…"
-        _clear_live_cloud()
-        print("[wipe] stopping slam + mapping", flush=True)
-        _stop_daemons(("slam", "mapping"))
-        stopped = True
-
-        # slam's cache = every file next to map_path (slam.bbmap + slam.history + slam.poses and
-        # any *.failed-* leftovers); subdirs are left alone. mapping's map = its whole map_dir
-        # (frames.bin + tiles/), which the daemon recreates on boot exactly as it does after a
-        # fresh-slam boot.
-        slam_maps = Path(Config('slam').map_path).parent
-        for p in slam_maps.iterdir():
-            if p.is_file():
-                p.unlink()
-        shutil.rmtree(Config('mapping').map_dir, ignore_errors=True)
-
-        print("[wipe] restarting slam + mapping", flush=True)
-        _slam_ready = False
-        robot_status = "wiped — waiting for SLAM"
-        print("[wipe] files gone — slam/mapping will boot into a fresh map", flush=True)
-    except Exception as e:
-        robot_status = f"wipe failed: {e}"
-        print(f"[wipe] FAILED: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-    finally:
-        if stopped:
-            _start_daemons(("slam", "mapping"))
-        _wiping = False
 
 
 def rebuild_loop():
@@ -788,9 +401,8 @@ def rebuild_loop():
             time.sleep(0.5)
 
 
-def pack_floor(grid, origin, voxel_size_m):
+def pack_floor(grid, origin, voxel_size_m, packet_type=2):
     fi, fj = np.where(grid == 1)
-    if len(fi) == 0: return None
     if len(fi) > 100000:
         idx = np.random.choice(len(fi), 100000, replace=False)
         fi, fj = fi[idx], fj[idx]
@@ -799,13 +411,14 @@ def pack_floor(grid, origin, voxel_size_m):
     coords[:, 0] = origin[0] + (fi + 0.5) * voxel_size_m
     coords[:, 1] = origin[1] + (fj + 0.5) * voxel_size_m
     coords[:, 2] = 0.02
-    return struct.pack('<II', 2, n) + zlib.compress(coords.tobytes(), 1)
+    return struct.pack('<II', packet_type, n) + zlib.compress(coords.tobytes(), 1)
 
 
 def pack_heatmap(g_cost, origin, voxel_size_m):
-    finite = g_cost < _INF
+    finite = g_cost < 1e18
     fi, fj = np.where(finite)
-    if len(fi) == 0: return None
+    if len(fi) == 0:
+        return struct.pack("<II", 3, 0) + zlib.compress(b"", 1)
     costs = g_cost[fi, fj]
     cmin, cmax = costs.min(), costs.max()
     norm = np.zeros(len(fi), dtype=np.float32) if cmax - cmin < 1e-6 else ((costs - cmin) / (cmax - cmin)).astype(np.float32)
@@ -832,14 +445,14 @@ def make_state(pos, yaw, goal_pos, path, pred, diag=None, ready=True):
            "ready": bool(ready),
            "rx": round(float(pos[0]), 3), "ry": round(float(pos[1]), 3),
            "rh": round(float(yaw), 4),
-           "status": robot_status,
+           "status": command_error or robot_status,
+           "resetting": resetting,
            "wp": wp_idx, "running": patrol_running, "loop": patrol_loop,
-           "global": global_mode, "manual": manual_drive,
-           "frontier": frontier_active, "frontier_map": frontier_map,
-           "floor": show_floor, "gradient": show_gradient, "slam_path": show_slam_path,
+           "global": global_mode,
+           "manual": manual_drive,
+           "floor": floor_mode, "gradient": show_gradient, "slam_path": show_slam_path,
            "depth": show_depth,
-           "nav_map": show_nav_map, "cloud_source": cloud_source, "cloud_names": cloud_names,
-           "plan_source": plan_source, "plan_order": plan_order,
+           "nav_map": show_nav_map,
            "map_gen": _map_gen,
            "rebuild": {**_rebuild, "age": round(time.time() - _rebuild["t"], 1) if _rebuild["t"] else None},
            "waypoints": [[round(float(w[0]), 3), round(float(w[1]), 3),
@@ -854,743 +467,331 @@ def make_state(pos, yaw, goal_pos, path, pred, diag=None, ready=True):
     if pred:
         msg["pred"] = [[round(float(p[0]), 3) for p in pred],
                        [round(float(p[1]), 3) for p in pred]]
-    if global_mode and path and len(path) > 1:
-        # breadcrumbs every ~0.2m along the mapped-floor route to the (closest reachable) goal
-        stepm = max(1, int(round(0.2 / CFG_M.voxel_size_m)))
-        msg["route_wps"] = [[round(float(p[0]), 3), round(float(p[1]), 3)] for p in path[::stepm]]
     if diag:
         msg["diag"] = diag
     return json.dumps(msg)
 
 
-def control_loop():
-    """Crash guard: if the control body ever raises, log it and restart the loop instead of
-    silently killing the thread — a dead control thread zombifies the whole app (no state
-    broadcasts -> every client stuck on 'connecting', no command handling, no drive output)."""
-    while True:
+def write_route(writer, enabled):
+    if writer is None:
+        writer = Writer("nav.command", Type("nav_command"), keeptime=False)
+    with writer.buf() as command:
+        command["enabled"] = enabled
+        command["num_waypoints"] = len(waypoints)
+        command["waypoints"].fill(np.nan)
+        for index, (x, y, yaw) in enumerate(waypoints):
+            command["waypoints"][index] = (x, y, np.nan if yaw is None else yaw)
+        command["loop"] = patrol_loop
+        command["global_goal"] = global_mode
+    return writer
+
+
+def nav_client_loop():
+    global waypoints, wp_idx, patrol_running, patrol_loop, global_mode, robot_status, command_error
+    global manual_drive, floor_mode, show_gradient, show_slam_path, show_depth, show_nav_map
+    global _slam_ready, _shared_pos, _last_slam_t
+    global resetting, nav_path
+    command_writer = drive_writer = mode_writer = None
+    reset_writer = None
+    reset_frames = reset_after = 0
+    command_time = 0
+    teleop_keys, teleop_shift, teleop_gain, teleop_time = '', False, 1.0, 0.0
+    next_state = 0.0
+    params_mtime = PARAMS_FILE.stat().st_mtime_ns
+    control_interval = 1.0 / Config("base").command_hz
+    with Reader("nav.command", keeptime=False) as commands, \
+            Reader("nav.state", keeptime=False) as states, \
+            Reader("slam.pose", keeptime=False) as poses, \
+            Reader("slam.health", keeptime=False) as health, \
+            Reader("drive.ctrl", keeptime=False) as drive:
         try:
-            _control_loop_impl()
-        except Exception:
-            import traceback
-            print("[ctrl] CRASHED — restarting control loop", flush=True)
-            traceback.print_exc()
-            time.sleep(1.0)
+            while not stopping.is_set():
+                now = time.monotonic()
+                if now >= next_state:
+                    if (reset_writer is not None and health.ready()
+                            and int(health.data['timestamp']) > reset_after):
+                        # Two publications cover a frame already in flight when we wrote the flag.
+                        reset_frames -= 1
+                        if reset_frames == 2:
+                            reset_writer['reset_map'] = True
+                            reset_after = time.time_ns()
+                        elif reset_frames == 0:
+                            reset_writer['reset_map'] = False
+                            reset_writer.__exit__(None, None, None)
+                            reset_writer = None
+                            resetting = False
+                            command_error = ""
+                            _clear_live_cloud()
+                    # Read-only until Start: an external BBOS client can own navigation.
+                    if commands.ready() and command_writer is None:
+                        data = commands.data
+                        waypoints = [(float(x), float(y), None if np.isnan(yaw) else float(yaw))
+                                     for x, y, yaw in data["waypoints"][:int(data["num_waypoints"])]]
+                        patrol_loop = bool(data["loop"])
+                        global_mode = bool(data["global_goal"])
+                    if states.ready():
+                        data = states.data
+                        status = data["state"].decode()
+                        reason = data["reason"].decode()
+                        wp_idx = int(data["waypoint_index"])
+                        patrol_running = status in ("navigating", "waiting_for_drive")
+                        robot_status = status + (f": {reason}" if reason else "")
+                        if (command_writer is not None and status in ("reached", "failed")
+                                and int(data["timestamp"]) > command_time):
+                            command_writer.__exit__(None, None, None)
+                            command_writer = None
+                    if (not states.readable or states.data is None
+                            or (time.time_ns() - int(states.data["timestamp"])) * 1e-9 > 0.5):
+                        robot_status = "waiting for nav daemon"
+                        patrol_running = False
+                        wp_idx = -1
+                    if poses.ready():
+                        pose = poses.data
+                        _shared_pos = (float(pose['pos'][0]), float(pose['pos'][1]),
+                                       2.0 * math.atan2(float(pose['quat'][2]), float(pose['quat'][3])))
+                        _last_slam_t = time.time()
+                    _slam_ready = (poses.readable and poses.data is not None
+                                   and (time.time_ns() - int(poses.data['timestamp'])) * 1e-9 < 0.3)
+                    mtime = PARAMS_FILE.stat().st_mtime_ns
+                    if mtime != params_mtime:
+                        load_params_file()
+                        params_mtime = mtime
+                        broadcast_ws(json.dumps({"t": "params", "params": PARAMS}))
 
-
-def _control_loop_impl():
-    global wp_idx, patrol_running, patrol_loop, waypoints, robot_status, nav_bounds_corners
-    global frontier_active, frontier_map
-    global show_floor, show_gradient, show_slam_path, show_depth, goal, _replan_needed, _vis_dirty
-    global _slam_ready, _shared_pos, global_mode, show_nav_map, cloud_source, plan_source
-    global manual_drive, _teleop_keys, _teleop_shift, _teleop_gain, _teleop_t, _last_slam_t
-    global _wiping
-
-    with Writer("drive.ctrl", Type("drive_ctrl")) as w_drive, \
-         Reader("slam.pose") as r_slam:
-
-        pos = np.zeros(3, dtype=np.float32)
-        path = []
-        _path_i = np.empty(500, dtype=np.int32)
-        _path_j = np.empty(500, dtype=np.int32)
-        smooth_v = smooth_w = 0.0
-        slam_ready = False
-        last_state_t = last_path_t = 0.0
-        # Stuck recovery
-        last_goal_dist = float('inf')
-        last_progress_t = 0.0
-        last_move_pos = np.zeros(2, dtype=np.float32)   # robot pos at last detected movement
-        stuck_rotating = False
-        stuck_rotate_start = 0.0
-        stuck_rotations = 0
-        aligning = False                                # final turn-in-place to the waypoint heading
-        prev_cte = 0.0
-        # Diagnostics
-        diag = {}
-
-        while True:
-            now = time.time()
-
-            # Read SLAM pose (p_slam GL base pose) -> nav frame (same frame mapping builds in)
-            if r_slam.ready():
-                _last_slam_t = now
-                T_nav_base = T_nav_gl @ G.quat_to_mat(r_slam.data['pos'], r_slam.data['quat'])
-                new_x, new_y = float(T_nav_base[0, 3]), float(T_nav_base[1, 3])
-                new_yaw = G.yaw_from_R(T_nav_base[:3, :3])
-                if not slam_ready:
-                    slam_ready = True
-                    _slam_ready = True
-                    if robot_status.startswith('wiped'):
-                        robot_status = 'idle'
-                    print(f"[ctrl] SLAM ready pos=({new_x:.2f}, {new_y:.2f})", flush=True)
-                # RAW slam pose — no smoothing of any kind (deliberate): loop-closure and
-                # relock jumps snap immediately, downstream sees exactly what SLAM publishes.
-                pos[0], pos[1], pos[2] = new_x, new_y, new_yaw
-                _shared_pos[:] = pos
-
-            # Drain commands
-            while not cmd_queue.empty():
-                try:
+                while not cmd_queue.empty():
                     cmd = cmd_queue.get_nowait()
-                    if cmd['type'] == 'add_wp':
-                        h = cmd.get('h')                                  # optional final heading (rad)
-                        waypoints.append((cmd['x'], cmd['y'], None if h is None else float(h)))
-                        print(f"[wp] added #{len(waypoints)-1}: ({cmd['x']:.2f}, {cmd['y']:.2f}) "
-                              f"h={'%.0fdeg' % math.degrees(h) if h is not None else 'none'}", flush=True)
-                    elif cmd['type'] == 'start':
-                        if waypoints:
-                            manual_drive = False   # autonomous and manual are mutually exclusive
-                            patrol_running = True; wp_idx = 0
-                            goal = np.array(waypoints[0][:2], dtype=np.float32)
-                            path = []; _replan_needed = True
-                            last_goal_dist = float('inf'); last_progress_t = now
-                            stuck_rotations = 0; stuck_rotating = False; aligning = False
-                            print(f"[wp] patrol started, {len(waypoints)} waypoints", flush=True)
-                    elif cmd['type'] == 'stop':
-                        patrol_running = False; goal = None; path = []
-                        smooth_v = smooth_w = 0.0
-                        print("[wp] patrol stopped", flush=True)
-                    elif cmd['type'] == 'loop':
-                        patrol_loop = cmd['enabled']
-                        print(f"[wp] loop={'ON' if patrol_loop else 'OFF'}", flush=True)
-                    elif cmd['type'] == 'clear':
-                        waypoints = []; wp_idx = 0
-                        patrol_running = False; goal = None; path = []
-                        smooth_v = smooth_w = 0.0
-                        print("[wp] cleared all waypoints", flush=True)
-                    elif cmd['type'] == 'nav_bounds':
-                        c = cmd.get('corners')
-                        if c is None:
-                            nav_bounds_corners = None
-                            print("[wp] bounds cleared", flush=True)
-                        else:
-                            nav_bounds_corners = [(float(p[0]), float(p[1])) for p in c]
-                            print(f"[wp] bounds set", flush=True)
-                        _replan_needed = True; _vis_dirty = True
-                    elif cmd['type'] == 'toggle':
-                        key = cmd['key']
-                        if key == 'floor':
-                            show_floor = not show_floor; _vis_dirty = True
-                        elif key == 'gradient':
-                            show_gradient = not show_gradient; _vis_dirty = True
-                        elif key == 'slam_path':
-                            show_slam_path = not show_slam_path
-                        elif key == 'depth':
-                            show_depth = (show_depth + 1) % 3
-                            print(f"[wp] show_depth={DEPTH_MODES[show_depth]}", flush=True)
-                        elif key == 'nav_map':
-                            show_nav_map = not show_nav_map; _replan_needed = True
-                            print(f"[wp] nav_map(live)={'ON' if show_nav_map else 'OFF'}", flush=True)
-                        elif key == 'map':
-                            order = ['off'] + cloud_names
-                            i = order.index(cloud_source) if cloud_source in order else 0
-                            cloud_source = order[(i + 1) % len(order)]
-                            print(f"[wp] cloud={cloud_source}", flush=True)
-                        elif key == 'global':
-                            global_mode = not global_mode; _replan_needed = True
-                            print(f"[wp] global_mode={'ON' if global_mode else 'OFF'}", flush=True)
-                        elif key == 'frontier':
-                            # Auki Path Mode: while on, ALL planning runs on the fused grid =
-                            # given map + live obstacles (see planner_loop). Needs a map installed.
-                            if not auki_maps:
-                                robot_status = "no map installed — Auki Path Mode unavailable"
-                                print("[wp] frontier toggle refused: no map", flush=True)
-                            else:
-                                frontier_active = not frontier_active; _replan_needed = True
-                                print(f"[wp] frontier={'ON' if frontier_active else 'OFF'}", flush=True)
-                        elif key == 'manual':
-                            manual_drive = not manual_drive
-                            if manual_drive:        # taking manual control stops the patrol
-                                patrol_running = False; goal = None; path = []
-                                smooth_v = smooth_w = 0.0
-                            _teleop_keys = ''       # start from a stopped state
-                            print(f"[wp] manual_drive={'ON' if manual_drive else 'OFF'}", flush=True)
-                    elif cmd['type'] == 'teleop':
-                        _teleop_keys = cmd.get('keys', '')
-                        _teleop_shift = bool(cmd.get('shift', False))
-                        _teleop_gain = float(cmd.get('gain', 1.0))
-                        _teleop_t = now
-                    elif cmd['type'] == 'remove_last':
-                        if waypoints:
-                            waypoints.pop()
-                            if wp_idx >= len(waypoints):
-                                wp_idx = 0
-                                if patrol_running and waypoints:
-                                    goal = np.array(waypoints[0][:2], dtype=np.float32)
-                                    _replan_needed = True
-                                elif not waypoints:
-                                    patrol_running = False; goal = None; path = []
-                    elif cmd['type'] == 'set_param':
-                        k = cmd.get('key'); val = cmd.get('value')
-                        if k in PARAMS and val is not None:
-                            PARAMS[k] = int(round(float(val))) if k in INT_PARAMS else float(val)
-                            if k in PLANNER_PARAMS:
-                                _replan_needed = True
-                    elif cmd['type'] == 'save_params':
-                        save_params_file()
-                    elif cmd['type'] == 'load_params':
-                        ok = load_params_file()
-                        _replan_needed = True
-                        broadcast_ws(json.dumps(
-                            {"t": "params", "params": dict(PARAMS), "loaded": bool(ok)}))
-                    elif cmd['type'] == 'wipe_map':
-                        if not _wiping:
-                            _wiping = True
-                            patrol_running = False
+                    kind = cmd['type']
+                    if kind != 'teleop':
+                        command_error = ""
+                    try:
+                        send_route = False
+                        if resetting and (kind in ('reset_map', 'start', 'add_wp', 'remove_last', 'clear', 'loop')
+                                          or (kind == 'toggle' and cmd['key'] in ('manual', 'global'))):
+                            raise RuntimeError("Map reset in progress")
+                        if kind == 'reset_map':
+                            if commands.readable and command_writer is None:
+                                raise RuntimeError("Stop navigation from the app that owns nav.command first")
+                            reset_writer = Writer("slam.trigger", Type("slam_trigger"), keeptime=False)
+                            reset_writer['reset_map'] = False
+                            if command_writer is not None:
+                                write_route(command_writer, False)
+                                command_writer.__exit__(None, None, None)
+                                command_writer = None
                             manual_drive = False
-                            waypoints = []; wp_idx = 0
-                            goal = None; path = []
-                            smooth_v = smooth_w = 0.0
-                            slam_ready = False
-                            _slam_ready = False
-                            pos[:] = 0
-                            _shared_pos[:] = pos
-                            robot_status = "wiping SLAM + map…"
-                            print("[wipe] requested from UI", flush=True)
-                            threading.Thread(target=wipe_slam_and_map, daemon=True).start()
-                except: pass
-
-            # Grab planner state (local refs, safe even if planner swaps)
-            g_cost = pout.active
-            grid = pout.grid
-            origin = pout.origin.copy()
-            GS = grid.shape[0] if grid is not None else 0
-            # Plan-source switches (auki <-> floor) RESIZE the grid, and these reads are not
-            # atomic vs the planner thread — across a swap g_cost can still be sized for the
-            # old grid while grid/origin are the new ones, so ri/rj bounds-checked against GS
-            # index out of g_cost (this killed the control thread once). If the cost buffer
-            # doesn't match the grid, treat planner output as not-ready this tick; a
-            # consistent replan lands within REPLAN_INTERVAL.
-            if g_cost is not None and g_cost.shape[0] != GS:
-                g_cost = None
-
-            # Check arrival — same sequential waypoint advance in both modes. (Global mode
-            # only changes HOW the planner targets each waypoint: greedy creep over mapped
-            # floor toward the closest reachable cell, never skipping the waypoint.)
-            wp_h = (waypoints[wp_idx][2] if (patrol_running and wp_idx < len(waypoints)
-                    and len(waypoints[wp_idx]) > 2) else None)
-            do_advance = False
-            if patrol_running and goal is not None and not aligning and \
-                    np.linalg.norm(goal - pos[:2]) < PARAMS['GOAL_TOLERANCE']:
-                if wp_h is not None:                       # reached position -> turn in place to heading
-                    aligning = True
-                    robot_status = f"WP {wp_idx} reached — turning to heading"
-                else:
-                    do_advance = True
-            if patrol_running and aligning:
-                if wp_h is None:
-                    aligning = False; do_advance = True
-                else:
-                    herr = math.atan2(math.sin(wp_h - pos[2]), math.cos(wp_h - pos[2]))
-                    if abs(herr) < PARAMS['HEADING_TOL']:
-                        aligning = False; do_advance = True
-            if do_advance:
-                robot_status = f"arrived at WP {wp_idx}"
-                print(f"[wp] arrived at waypoint {wp_idx}", flush=True)
-                wp_idx += 1
-                if wp_idx >= len(waypoints):
-                    if patrol_loop:
-                        wp_idx = 0
-                        goal = np.array(waypoints[0][:2], dtype=np.float32)
-                        _replan_needed = True; path = []
-                        robot_status = "looping back to WP 0"
-                        last_goal_dist = float('inf'); last_progress_t = now
-                        stuck_rotations = 0; stuck_rotating = False
-                    else:
-                        patrol_running = False; goal = None; path = []
-                        smooth_v = smooth_w = 0.0
-                        robot_status = "patrol complete"
-                else:
-                    goal = np.array(waypoints[wp_idx][:2], dtype=np.float32)
-                    _replan_needed = True; path = []
-                    robot_status = f"heading to WP {wp_idx}"
-                    last_goal_dist = float('inf'); last_progress_t = now
-                    stuck_rotations = 0; stuck_rotating = False
-
-            # Extract path for viz (every 0.2s)
-            if g_cost is not None and goal is not None and GS > 0 and now - last_path_t >= 0.2:
-                last_path_t = now
-                inv = 1.0 / CFG_M.voxel_size_m
-                ri, rj = w2g(pos[0], pos[1], origin, inv)
-                n = _extract_path_jit(g_cost, ri, rj, GS, _path_i, _path_j, 500)
-                path = [g2w(_path_i[k], _path_j[k], origin, CFG_M.voxel_size_m) for k in range(n)]
-
-            # --- Stuck detection + rotate recovery ---
-            v, omega = 0.0, 0.0
-            cte = 0.0
-            he_deg = 0.0
-            la_dist = 0.0
-            robot_cost = _INF
-            goal_dist = 0.0
-            n_path = 0
-            # controller term breakdown (for the tuning graphs)
-            t_pp = t_p = t_d = 0.0          # ω contributions: pursuit, cross-track P, D
-            f_op = f_tn = f_al = f_cl = 1.0  # v multipliers: off-path, turn, align, clearance
-
-            if patrol_running and aligning and wp_h is not None:
-                # final heading phase: spin in place at constant speed toward the target heading
-                # (slam_reloc commands a constant omega=max_omega; we close the loop with a tol stop)
-                herr = math.atan2(math.sin(wp_h - pos[2]), math.cos(wp_h - pos[2]))
-                v = 0.0
-                omega = PARAMS['HEADING_OMEGA'] * (1.0 if herr >= 0 else -1.0)
-                robot_status = f"turning to heading WP {wp_idx} ({math.degrees(herr):+.0f}deg)"
-            elif patrol_running and goal is not None:
-                goal_dist = float(np.linalg.norm(goal - pos[:2]))
-                # Progress = the robot actually MOVED. Distance-to-goal is misleading in
-                # global mode: the true goal may be unreachable, yet creeping Euclidean-
-                # closer to it (even straight into a dead end) reads as "progress" forever,
-                # so the stuck timer never fires and it just keeps nosing forward. Position
-                # movement is honest — a robot wedged against an obstacle isn't moving.
-                if math.hypot(pos[0] - last_move_pos[0], pos[1] - last_move_pos[1]) > PARAMS['PROGRESS_EPS']:
-                    last_move_pos[0], last_move_pos[1] = pos[0], pos[1]; last_progress_t = now
-                n_rot = int(PARAMS['N_ROTATIONS'])
-                if stuck_rotating:
-                    v = 0.0; omega = PARAMS['MAX_OMEGA'] * PARAMS['ROTATE_FRAC']
-                    robot_status = f"stuck — rotating to rescan ({stuck_rotations}/{n_rot})"
-                    if now - stuck_rotate_start > PARAMS['ROTATE_TIME']:
-                        stuck_rotating = False
-                        _replan_needed = True
-                        last_progress_t = now
-                        print(f"[ctrl] rotation done, replanning", flush=True)
-                elif (now - last_progress_t > PARAMS['STUCK_TIME']) and not stuck_rotating:
-                    stuck_rotations += 1
-                    if stuck_rotations > n_rot and not global_mode:
-                        # global mode has one goal and never skips it
-                        print(f"[ctrl] skipping unreachable WP {wp_idx}", flush=True)
-                        wp_idx += 1
-                        if wp_idx >= len(waypoints):
-                            if patrol_loop: wp_idx = 0
+                            if drive_writer is not None:
+                                drive_writer['twist'] = (0.0, 0.0)
+                                drive_writer.__exit__(None, None, None)
+                                drive_writer = None
+                            waypoints, nav_path = [], []
+                            resetting = True
+                            reset_frames = 4  # Observe False, then True, before releasing the writer.
+                            reset_after = time.time_ns()
+                        elif kind in ('add_wp', 'remove_last', 'clear', 'loop'):
+                            if commands.readable and command_writer is None:
+                                raise RuntimeError("nav.command is owned by another app")
+                            if kind == 'add_wp':
+                                if len(waypoints) == nav_constants.MAX_WAYPOINTS:
+                                    raise ValueError("Maximum 128 waypoints")
+                                waypoint = (float(cmd['x']), float(cmd['y']),
+                                            None if cmd.get('h') is None else float(cmd['h']))
+                                if not all(math.isfinite(v) for v in waypoint if v is not None):
+                                    raise ValueError("Invalid waypoint coordinates")
+                                waypoints.append(waypoint)
+                            elif kind == 'remove_last' and waypoints:
+                                waypoints.pop()
+                            elif kind == 'clear':
+                                waypoints = []
+                            elif kind == 'loop':
+                                patrol_loop = not patrol_loop
+                            send_route = command_writer is not None
+                        elif kind == 'start' and waypoints:
+                            manual_drive = False
+                            if drive_writer is not None:
+                                drive_writer['twist'] = (0.0, 0.0)
+                                drive_writer.__exit__(None, None, None)
+                                drive_writer = None
+                            send_route = True
+                        elif kind == 'stop' or (kind == 'toggle' and cmd['key'] == 'manual'):
+                            if kind == 'stop':
+                                manual_drive = False
                             else:
-                                patrol_running = False; goal = None; path = []
-                                robot_status = "patrol complete"
-                        if patrol_running and wp_idx < len(waypoints):
-                            goal = np.array(waypoints[wp_idx][:2], dtype=np.float32)
-                            _replan_needed = True; path = []
-                            last_goal_dist = float('inf'); last_progress_t = now
-                            stuck_rotations = 0
+                                manual_drive = not manual_drive
+                                teleop_keys = ''
+                            if command_writer is not None:
+                                write_route(command_writer, False)
+                                command_writer.__exit__(None, None, None)
+                                command_writer = None
+                            elif kind == 'stop' and commands.readable:
+                                raise RuntimeError("Stop navigation from the app that owns nav.command")
+                        elif kind == 'toggle':
+                            key = cmd['key']
+                            if key == 'floor': floor_mode = (floor_mode + 1) % 4
+                            elif key == 'gradient': show_gradient = not show_gradient
+                            elif key == 'slam_path': show_slam_path = not show_slam_path
+                            elif key == 'nav_map': show_nav_map = not show_nav_map
+                            elif key == 'depth': show_depth = (show_depth + 1) % len(DEPTH_MODES)
+                            elif key == 'global':
+                                if commands.readable and command_writer is None:
+                                    raise RuntimeError("nav.command is owned by another app")
+                                global_mode = not global_mode
+                                send_route = command_writer is not None
+                        elif kind == 'teleop' and manual_drive:
+                            teleop_keys = cmd.get('keys', '')
+                            teleop_shift = bool(cmd.get('shift', False))
+                            teleop_gain = float(cmd.get('gain', 1.0))
+                            teleop_time = now
+                        elif kind == 'set_param':
+                            key = cmd['key']
+                            if key in PARAMS:
+                                value = float(cmd['value'])
+                                if not math.isfinite(value):
+                                    raise ValueError("Invalid parameter value")
+                                PARAMS[key] = int(round(value)) if key in INT_PARAMS else value
+                                save_params_file()
+                        elif kind == 'save_params':
+                            save_params_file()
+                            broadcast_ws(json.dumps({"t": "params", "params": PARAMS, "saved": True}))
+                        elif kind == 'load_params':
+                            load_params_file()
+                            broadcast_ws(json.dumps({"t": "params", "params": PARAMS, "loaded": True}))
+                        if send_route:
+                            command_time = time.time_ns()
+                            command_writer = write_route(command_writer, bool(waypoints))
+                            if not waypoints:
+                                command_writer.__exit__(None, None, None)
+                                command_writer = None
+                    except (RuntimeError, ValueError, KeyError, OSError) as error:
+                        command_error = str(error)
+
+                if manual_drive:
+                    if drive_writer is None:
+                        if mode_writer is not None:
+                            mode_writer.__exit__(None, None, None)
+                            mode_writer = None
+                        try:
+                            drive_writer = Writer("drive.ctrl", Type("drive_ctrl"), keeptime=False)
+                            mode_writer = Writer("base.mode", Type("base_mode"), keeptime=False)
+                        except RuntimeError as error:
+                            if drive_writer is not None:
+                                drive_writer.__exit__(None, None, None)
+                                drive_writer = None
+                            if not str(error).startswith(("Writer for drive.ctrl already exists (pid=", "Writer for base.mode already exists (pid=")):
+                                raise
+                    if drive_writer is not None:
+                        with mode_writer.buf() as mode:
+                            mode['mode'] = CFG_BASE.MODE_BALANCE
+                            mode['lean_angle_deg'] = CFG_BASE.lean_angle_deg
+                        keys = teleop_keys if now - teleop_time < TELEOP_TIMEOUT else ''
+                        drive_writer['twist'] = teleop_twist(keys, teleop_shift, teleop_gain)
+                        robot_status = "manual"
                     else:
-                        stuck_rotating = True; stuck_rotate_start = now
-                        print(f"[ctrl] no progress {PARAMS['STUCK_TIME']:.0f}s, rotating ({stuck_rotations}/{n_rot})", flush=True)
+                        robot_status = "manual: waiting for base control"
+                elif drive_writer is not None:
+                    drive_writer['twist'] = (0.0, 0.0)
+                    drive_writer.__exit__(None, None, None)
+                    drive_writer = None
+                if not manual_drive and mode_writer is not None:
+                    mode_writer.__exit__(None, None, None)
+                    mode_writer = None
 
-            # --- Pure pursuit ---
-            if patrol_running and goal is not None and g_cost is not None and grid is not None and not stuck_rotating and not aligning:
-                inv = 1.0 / CFG_M.voxel_size_m
-                ri, rj = w2g(pos[0], pos[1], origin, inv)
-                robot_cost = g_cost[ri, rj] if 0 <= ri < GS and 0 <= rj < GS else _INF
-                if robot_cost >= _INF:
-                    robot_status = "stuck — no path to goal"
-                else:
-                    robot_status = f"navigating WP {wp_idx} — {goal_dist:.1f}m away"
-                n_path = _extract_path_jit(g_cost, ri, rj, GS, _path_i, _path_j, 500)
-                if n_path > 2:
-                    wx_arr = origin[0] + (_path_i[:n_path] + 0.5) * CFG_M.voxel_size_m
-                    wy_arr = origin[1] + (_path_j[:n_path] + 0.5) * CFG_M.voxel_size_m
-
-                    # Pure pursuit: lookahead point
-                    cum_dist = np.concatenate([[0], np.cumsum(np.sqrt(np.diff(wx_arr)**2 + np.diff(wy_arr)**2))])
-                    la_idx = min(np.searchsorted(cum_dist, PARAMS['LOOKAHEAD']), n_path - 1)
-                    dx, dy = float(wx_arr[la_idx]) - pos[0], float(wy_arr[la_idx]) - pos[1]
-                    L = math.hypot(dx, dy)
-                    la_dist = L
-                    if L > 0.01:
-                        hx, hy = -math.sin(pos[2]), math.cos(pos[2])
-                        fwd = hx * dx + hy * dy; lat = -hy * dx + hx * dy
-                        kappa = 2.0 * lat / (L * L)
-
-                        # Cross-track error: signed distance from robot to nearest path segment
-                        dx_all = wx_arr - pos[0]; dy_all = wy_arr - pos[1]
-                        nearest = int(np.argmin(dx_all**2 + dy_all**2))
-                        fwd_i = min(nearest + 2, n_path - 1)
-                        seg_dx = float(wx_arr[fwd_i] - wx_arr[max(nearest-1, 0)])
-                        seg_dy = float(wy_arr[fwd_i] - wy_arr[max(nearest-1, 0)])
-                        seg_len = math.hypot(seg_dx, seg_dy)
-                        if seg_len > 0.001:
-                            ex = pos[0] - float(wx_arr[nearest])
-                            ey = pos[1] - float(wy_arr[nearest])
-                            cte = (ex * seg_dy - ey * seg_dx) / seg_len
-                        else:
-                            cte = 0.0
-                        cte_d = (cte - prev_cte) / max(STATE_INTERVAL, 0.01)
-                        prev_cte = cte
-
-                        # Heading error (degrees)
-                        if seg_len > 0.001:
-                            he_deg = math.degrees(math.atan2(
-                                hx * seg_dy - hy * seg_dx,
-                                hx * seg_dx + hy * seg_dy))
-
-                        # Combined: pure pursuit + cross-track PD (each term captured for graphs)
-                        v = PARAMS['SPEED']
-                        t_pp = v * kappa                       # pursuit steering
-                        t_p = PARAMS['K_CTE'] * cte            # cross-track P
-                        t_d = PARAMS['K_CTE_D'] * cte_d        # cross-track D
-                        omega = t_pp + t_p + t_d
-                        f_op = 1.0 / (1.0 + PARAMS['CTE_SPEED_K'] * cte * cte)   # off-path slow
-                        v *= f_op
-                        f_tn = 1.0 / (1.0 + PARAMS['TURN_SLOW_K'] * abs(omega))  # turn slow
-                        v *= f_tn
-                        mo = PARAMS['MAX_OMEGA']
-                        omega = max(-mo, min(mo, omega))
-                        if L > 0.05:
-                            f_al = max(0.0, fwd / L)           # heading-alignment gate
-                            v *= f_al
-                        # Slow down in tight spaces — ramp v with wall clearance (EDT)
-                        df = pout.dist_field
-                        if df is not None and 0 <= ri < df.shape[0] and 0 <= rj < df.shape[1]:
-                            dw = float(df[ri, rj]) * CFG_M.voxel_size_m   # m to nearest wall
-                            span = max(1e-3, PARAMS['CLEAR_FULL'] - PARAMS['CLEAR_MIN'])
-                            cf = max(0.0, min(1.0, (dw - PARAMS['CLEAR_MIN']) / span))
-                            f_cl = PARAMS['V_TIGHT_FRAC'] + (1.0 - PARAMS['V_TIGHT_FRAC']) * cf  # clearance slow
-                            v *= f_cl
-                elif n_path > 0:
-                    wx = float(origin[0] + (_path_i[n_path-1] + 0.5) * CFG_M.voxel_size_m)
-                    wy = float(origin[1] + (_path_j[n_path-1] + 0.5) * CFG_M.voxel_size_m)
-                    dx, dy = wx - pos[0], wy - pos[1]
-                    L = math.hypot(dx, dy)
-                    la_dist = L
-                    if L > 0.01:
-                        hx, hy = -math.sin(pos[2]), math.cos(pos[2])
-                        kappa = 2.0 * (-hy * dx + hx * dy) / (L * L)
-                        v = PARAMS['SPEED']; omega = v * kappa
-                        mo = PARAMS['MAX_OMEGA']
-                        omega = max(-mo, min(mo, omega))
-
-            # Velocity smoothing + drive
-            if patrol_running:
-                smooth_v += PARAMS['SMOOTH_V'] * (v - smooth_v)
-                smooth_w += PARAMS['SMOOTH_W'] * (omega - smooth_w)
-            elif manual_drive:
-                # WASD teleop: drive straight from the held keys (snappy, like teleop.py).
-                # Dead-man timeout stops the robot if key updates stop arriving.
-                keys = _teleop_keys if (now - _teleop_t) < TELEOP_TIMEOUT else ''
-                smooth_v, smooth_w = teleop_twist(keys, _teleop_shift, _teleop_gain)
-                if keys: robot_status = f"manual drive [{keys}]"
-                elif not _teleop_keys: robot_status = "manual drive — ready"
-            else:
-                smooth_v = smooth_w = 0.0
-
-            # Bounds safety: stop forward motion if robot is near/outside bounds edge
-            # (autonomous only — manual teleop is an explicit operator override)
-            if not manual_drive and nav_bounds_corners is not None and smooth_v > 0:
-                corners = nav_bounds_corners
-                rx, ry = float(pos[0]), float(pos[1])
-                # Check if robot is inside bounds polygon (same winding logic)
-                cx = sum(c[0] for c in corners) / 4
-                cy = sum(c[1] for c in corners) / 4
-                center_in = True
-                for k in range(4):
-                    ax, ay = corners[k]; bx, by = corners[(k+1) % 4]
-                    ex, ey = bx - ax, by - ay
-                    if (-ey * (cx - ax) + ex * (cy - ay)) < 0:
-                        center_in = False; break
-                sign = 1.0 if center_in else -1.0
-                # Signed distance to nearest edge (negative = outside)
-                min_dist = float('inf')
-                for k in range(4):
-                    ax, ay = corners[k]; bx, by = corners[(k+1) % 4]
-                    ex, ey = bx - ax, by - ay
-                    d = sign * (-ey * (rx - ax) + ex * (ry - ay)) / math.hypot(ex, ey)
-                    if d < min_dist:
-                        min_dist = d
-                if min_dist < 0.15:  # within 15cm of edge or outside
-                    smooth_v = 0.0
-                    robot_status = "stopped — at bounds edge"
-
-            if not os.path.exists("/dev/shm/drive.ctrl"):   # a full `restart` rm's /dev/shm/*.ctrl: our segment is an orphan inode
-                w_drive.__exit__(None, None, None)
-                w_drive = Writer("drive.ctrl", Type("drive_ctrl"))
-            w_drive['twist'] = np.array([smooth_v, smooth_w], dtype=np.float32)
-
-            # Build diagnostics
-            diag = {}
-            if patrol_running and goal is not None:
-                diag['v'] = round(float(smooth_v), 3)
-                diag['w'] = round(float(smooth_w), 3)
-                diag['cte'] = round(float(cte) * 100, 1)   # cm
-                diag['he'] = round(float(he_deg), 1)        # degrees
-                diag['la'] = round(float(la_dist), 3)       # m
-                # controller term breakdown (ω = pursuit + cte_P + cte_D; v *= factors)
-                diag['t_pp'] = round(float(t_pp), 3)
-                diag['t_p'] = round(float(t_p), 3)
-                diag['t_d'] = round(float(t_d), 3)
-                diag['f_op'] = round(float(f_op), 2)
-                diag['f_tn'] = round(float(f_tn), 2)
-                diag['f_al'] = round(float(f_al), 2)
-                diag['f_cl'] = round(float(f_cl), 2)
-                diag['rc'] = round(float(robot_cost), 1) if robot_cost < _INF else None
-                ggi, ggj = pout.goal_gi, pout.goal_gj
-                gc_val = float(g_cost[ggi, ggj]) if g_cost is not None and 0 <= ggi < GS and 0 <= ggj < GS else _INF
-                diag['gc'] = round(gc_val, 1) if gc_val < _INF else None
-                diag['pc'] = int(pout.passable_count)
-                diag['rpt'] = round(float(pout.replan_ms), 1)
-                # Wall distance from EDT
-                df = pout.dist_field
-                if df is not None and GS > 0:
-                    inv = 1.0 / CFG_M.voxel_size_m
-                    ri, rj = w2g(pos[0], pos[1], origin, inv)
-                    dw_cells = float(df[ri, rj]) if 0 <= ri < df.shape[0] and 0 <= rj < df.shape[1] else 0.0
-                    diag['dw'] = round(float(dw_cells * CFG_M.voxel_size_m), 2)
-                diag['dg'] = round(float(goal_dist), 2)
-                # Dist to nearest path point
-                if n_path > 0:
-                    px = origin[0] + (_path_i[:n_path] + 0.5) * CFG_M.voxel_size_m
-                    py = origin[1] + (_path_j[:n_path] + 0.5) * CFG_M.voxel_size_m
-                    dp = float(np.sqrt(np.min((px - pos[0])**2 + (py - pos[1])**2)))
-                    diag['dp'] = round(dp, 2)
-                # --- recovery state machine (what it's doing and the timers) ---
-                n_rot = int(PARAMS['N_ROTATIONS'])
-                if stuck_rotating:
-                    diag['st'] = 'ROTATING'
-                    diag['tr'] = round(now - stuck_rotate_start, 1)     # s into this rotation
-                elif robot_cost >= _INF:
-                    diag['st'] = 'NO PATH'
-                else:
-                    diag['st'] = 'NAV'
-                diag['tp'] = round(now - last_progress_t, 1)           # s since last progress
-                diag['stk'] = round(float(PARAMS['STUCK_TIME']), 1)    # rotates when tp exceeds this
-                diag['rot'] = f"{stuck_rotations}/{n_rot}"             # rescans used / max
-
-            # State broadcast — ALWAYS streams, even before the first QR lock. Gating on
-            # slam_ready meant zero messages until the robot saw a wall QR, so every tab sat
-            # on "Connecting..." with a perfectly healthy socket. Pre-lock states carry
-            # ready=false and the UI says what's actually happening.
-            if now - last_state_t >= STATE_INTERVAL:
-                last_state_t = now
-                # Predicted controller trajectory: roll out current (v, ω) as a
-                # constant-curvature arc — shows where the commanded twist actually leads.
-                pred = []
-                if patrol_running and smooth_v > 0.01:
-                    px, py, pth = float(pos[0]), float(pos[1]), float(pos[2])
-                    dt = 0.12
-                    for _ in range(25):  # ~3s horizon
-                        px += smooth_v * (-math.sin(pth)) * dt
-                        py += smooth_v * (math.cos(pth)) * dt
-                        pth += smooth_w * dt
-                        pred.append((px, py))
-                try:
-                    broadcast_ws(make_state(pos[:2], pos[2], goal, path, pred, diag,
-                                            ready=slam_ready))
-                except Exception as e:
-                    print(f"[ctrl] state error: {e}", flush=True)
-
-            # No explicit sleep here: r_slam.ready() and w_drive[...] above both already pace
-            # this loop via bbos's Loop.keeptime() (gcd of slam.pose's and drive.ctrl's declared
-            # periods, ~4-5ms). An extra fixed sleep on top of that only pushed every iteration
-            # over its budget, which is why this loop was constantly logging "Loop lagging".
+                if now >= next_state:
+                    drive.ready()
+                    speed = turn_rate = 0.0
+                    if (drive.readable and drive.data is not None
+                            and (time.time_ns() - int(drive.data['timestamp'])) * 1e-9 < 0.1):
+                        speed, turn_rate = map(float, drive.data['twist'])
+                    x, y, yaw = _shared_pos
+                    # Display the current command's three-second trajectory; no control calculation.
+                    prediction = []
+                    px, py, heading = x, y, yaw
+                    if speed or turn_rate:
+                        for _ in range(30):
+                            px -= math.sin(heading) * speed * 0.1
+                            py += math.cos(heading) * speed * 0.1
+                            heading += turn_rate * 0.1
+                            prediction.append((px, py))
+                    goal = waypoints[wp_idx] if patrol_running and 0 <= wp_idx < len(waypoints) else None
+                    if resetting:
+                        robot_status = "resetting map"
+                    diag = {"v": round(speed, 3), "w": round(turn_rate, 3)}
+                    broadcast_ws(make_state((x, y), yaw, goal, nav_path if patrol_running else [],
+                                            prediction, diag, ready=_slam_ready))
+                    next_state = now + STATE_INTERVAL
+                stopping.wait(control_interval if manual_drive else STATE_INTERVAL)
+        finally:
+            if mode_writer is not None:
+                mode_writer.__exit__(None, None, None)
+            if reset_writer is not None:
+                reset_writer['reset_map'] = False
+                reset_writer.__exit__(None, None, None)
+            if drive_writer is not None:
+                drive_writer['twist'] = (0.0, 0.0)
+                drive_writer.__exit__(None, None, None)
+            if command_writer is not None:
+                write_route(command_writer, False)
+                command_writer.__exit__(None, None, None)
 
 
-# --- Planner loop (~3Hz) ---
-
-def planner_loop():
-    global _replan_needed, _vis_dirty, robot_status, frontier_map, _last_grid_t
-
-    with Reader("mapping.grid2d", keeptime=False) as r_grid:   # nav-frame traversability (mapping uses T_nav_gl)
-        _hc = np.empty(_HEAP_CAP, dtype=np.float64)
-        _hn = np.empty(_HEAP_CAP, dtype=np.int32)
-        last_replan_t = 0.0
-        last_floor_vis_t = 0.0
-        auki_active = None
-
-        while True:
-         try:
-            now = time.time()
-            pos = _shared_pos.copy()
-
-            # Planning grid source:
-            #  - FRONTIER MODE (toggle): every waypoint plans on the GIVEN Auki map (robot
-            #    relocalized in it, no pre-mapping needed) with LIVE mapping obstacles OVERLAID
-            #    -> dynamic avoidance while traversing the global map. Base = the Plan:Auki
-            #    selection (else the first loaded map); live only ADDS obstacles.
-            #  - "auki:<name>": inspect that static Auki grid (raw).
-            #  - "floor": live mapping grid only (its own obstacle detection).
-            fmap = next(iter(auki_maps)) if auki_maps else None
-            if frontier_active and fmap is not None:
-                frontier_map = fmap                       # published in state for the button label
-                ag, ao = auki_maps[fmap]
-                new_live = r_grid.ready()
-                if new_live:
-                    _last_grid_t = now
-                fa_key = 'frontier:' + fmap
-                if auki_active != fa_key or new_live:
-                    map_switched = auki_active != fa_key or not pout.grid_ready
-                    auki_active = fa_key
-                    fused = ag.copy()
-                    try:                                  # stamp live obstacle cells into the Auki grid
-                        mg = r_grid.data['grid']; mo = r_grid.data['origin']
-                        mi, mj = np.nonzero(mg == 2)
-                        if len(mi):
-                            res = CFG_M.voxel_size_m
-                            ai = np.round((mo[0] + (mi + 0.5) * res - ao[0]) / res).astype(np.int64)
-                            aj = np.round((mo[1] + (mj + 0.5) * res - ao[1]) / res).astype(np.int64)
-                            v = (ai >= 0) & (ai < fused.shape[0]) & (aj >= 0) & (aj < fused.shape[1])
-                            fused[ai[v], aj[v]] = 2
-                    except Exception:
-                        pass
-                    pout.origin[:] = ao
-                    pout.grid = fused
-                    pout.grid_ready = True
-                    pout.ensure_init(fused.shape[0])
-                    # Live obstacle refresh alone shouldn't force the expensive EDT+Dijkstra
-                    # replan (that's what REPLAN_INTERVAL below is for) — only a real map
-                    # switch (or the very first grid) needs an immediate replan.
-                    if map_switched:
-                        _replan_needed = True
-                    # distance_transform_edt inside self_do_floor_vis is as expensive as the
-                    # replan EDT — don't run it at the live grid tick rate (~5Hz), only as
-                    # often as the plan itself actually changes (measured: this alone was
-                    # ~60% of total CPU once the Floor overlay got toggled on).
-                    if show_floor and (map_switched or now - last_floor_vis_t >= 5.0):  # floor changes slowly; ~72KB/push was saturating weak wifi at replan cadence
-                        last_floor_vis_t = now
-                        self_do_floor_vis(fused, inflate=True)
-            else:
-                auki_active = None
-                grid_ready = r_grid.ready()
-                if grid_ready:
-                    _last_grid_t = now
-                if grid_ready and _slam_ready:
-                    grid = np.array(r_grid.data['grid'], copy=True)   # 0 unknown, 1 floor, 2 obstacle
-                    origin = r_grid.data['origin'].copy()
-                    first_grid = not pout.grid_ready
-                    pout.origin[:] = origin
-                    pout.grid = grid
-                    pout.grid_ready = True
-                    pout.ensure_init(grid.shape[0])
-                    if first_grid:
-                        _replan_needed = True
-                    if show_floor and (first_grid or now - last_floor_vis_t >= 5.0):  # floor changes slowly; ~72KB/push was saturating weak wifi at replan cadence
-                        last_floor_vis_t = now
-                        self_do_floor_vis(grid, inflate=True)  # live nav: show inflated passable
-
-            # voxels: now streamed (keyframe + deltas) by the dedicated voxel_loop thread.
-
-            # Floor/gradient vis on toggle/bounds change
-            if _vis_dirty and pout.grid is not None:
-                _vis_dirty = False
-                print(f"[plan] vis_dirty: floor={show_floor} gradient={show_gradient}", flush=True)
-                if show_floor:
-                    last_floor_vis_t = now
-                    self_do_floor_vis(pout.grid)
-                if show_gradient and pout.active is not None:
-                    hm = pack_heatmap(pout.active, pout.origin, CFG_M.voxel_size_m)
-                    if hm:
-                        heat_latest[0] = hm; broadcast_heavy(hm)
-                        print(f"[plan] gradient vis pushed ({len(hm)} bytes)", flush=True)
-
-            # Periodic replan check
-            if goal is not None and pout.grid is not None and not _replan_needed:
-                if now - last_replan_t >= PARAMS['REPLAN_INTERVAL']:
-                    _replan_needed = True
-
-            # --- Dijkstra ---
-            if _replan_needed and goal is not None and pout.grid_ready:
-                _replan_needed = False
-                t0 = time.time()
-                grid = pout.grid
-                GS = grid.shape[0]
-                inv = 1.0 / CFG_M.voxel_size_m
-                origin = pout.origin.copy()
-
-                # Passable = floor cells directly (no dilation needed, mapping is clean)
-                passable = (grid == 1)
-                mask_outside_bounds(passable, nav_bounds_corners, origin, inv, GS)
-
-                # EDT for wall distance diagnostic + robot radius inflation
-                dist = distance_transform_edt(passable)
-                pout.dist_field = dist.copy()
-                passable[dist < PARAMS['ROBOT_RADIUS_CELLS']] = False
-                # Force robot cell passable so it can route back if outside bounds
-                ri, rj = w2g(pos[0], pos[1], origin, inv)
-                if 0 <= ri < GS and 0 <= rj < GS and not passable[ri, rj]:
-                    if grid[ri, rj] != 2:  # don't clear actual obstacles
-                        passable[ri, rj] = True
-
-                pout.passable_count = int(passable.sum())
-
-                # Proximity cost — soft repulsion from walls on top of hard inflation
-                dist_safe = np.maximum(dist, 1.0)
-                prox = (PARAMS['PROX_WEIGHT'] / (dist_safe * dist_safe)).astype(np.float32)
-
-                # Goal cell
-                cur_goal = goal
-                if cur_goal is None:
-                    time.sleep(0.01)
-                    continue
-                gi, gj = w2g(cur_goal[0], cur_goal[1], origin, inv)
-                gi, gj = max(0, min(GS-1, gi)), max(0, min(GS-1, gj))
-                if global_mode:
-                    # Plan over MAPPED FLOOR ONLY — never route through unmapped space.
-                    # If the goal isn't on the robot's reachable floor, retarget to the
-                    # reachable floor cell closest to it; the robot drives there and stops.
-                    lbl, _ = label(passable, structure=np.ones((3, 3), dtype=np.int32))
-                    rc = int(lbl[ri, rj]) if 0 <= ri < GS and 0 <= rj < GS else 0
-                    if rc != 0 and (not passable[gi, gj] or int(lbl[gi, gj]) != rc):
-                        ci, cj = np.where(lbl == rc)
-                        idx = np.argmin((ci - gi)**2 + (cj - gj)**2)
-                        gi, gj = int(ci[idx]), int(cj[idx])
-                elif not passable[gi, gj]:
-                    fi, fj = np.where(passable)
-                    if len(fi) > 0:
-                        idx = np.argmin((fi-gi)**2 + (fj-gj)**2)
-                        gi, gj = int(fi[idx]), int(fj[idx])
-
-                if 0 <= gi < GS and 0 <= gj < GS and passable[gi, gj]:
-                    pout.goal_gi, pout.goal_gj = gi, gj
-                    _dijkstra_backward(pout.work, passable, prox, gi, gj, GS, _hc, _hn)
-                    pout.swap()
-                else:
-                    pout.work[:, :] = _INF; pout.swap()
-                    robot_status = "no path — goal unreachable"
-
-                pout.replan_ms = (time.time() - t0) * 1000
-                last_replan_t = time.time()
-                print(f"[plan] replan {pout.replan_ms:.0f}ms passable={pout.passable_count}", flush=True)
-
-                # Gradient viz
-                if show_gradient:
-                    hm = pack_heatmap(pout.active, origin, CFG_M.voxel_size_m)
-                    if hm: heat_latest[0] = hm; broadcast_heavy(hm)
-
-            # mapping.grid2d publishes ~5Hz — polling at 100Hz just burns CPU on redundant
-            # full-grid IPC copies (each .ready() call copies the whole grid regardless of
-            # whether new data arrived).
-            time.sleep(0.05)
-         except Exception as e:
-            print(f"[plan] ERROR: {e}", flush=True)
-            import traceback; traceback.print_exc()
-            time.sleep(1.0)
+def map_view_loop():
+    global _last_grid_t, nav_path
+    grid = plan = None
+    floor_shown = inflated_floor_shown = gradient_shown = False
+    inflated_radius = None
+    next_plan = 0.0
+    with Reader("mapping.grid2d", keeptime=False) as grids, \
+            Reader("nav.plan", keeptime=False) as plans:
+        while not stopping.is_set():
+            grid_changed = grids.ready()
+            origin_changed = False
+            if grid_changed:
+                data = grids.data
+                origin_changed = grid is None or not np.array_equal(grid['origin'], data['origin'])
+                if grid is not None and origin_changed:
+                    _clear_live_cloud()
+                grid = data
+                _last_grid_t = time.time()
+            now = time.monotonic()
+            plan_changed = False
+            if now >= next_plan:
+                plan_changed = plans.ready()
+                if plan_changed:
+                    plan = plans.data
+                elif not plans.readable and plan is not None:
+                    plan = None
+                    plan_changed = True
+                if plan_changed:
+                    nav_path = (plan['path'][:int(plan['num_path_points'])].tolist()
+                                if plan is not None and plan['waypoint_index'] >= 0 else [])
+                next_plan = now + 0.5
+            show_floor = floor_mode in (1, 3)
+            show_inflated_floor = floor_mode in (2, 3)
+            if show_floor and grid is not None and (grid_changed or not floor_shown):
+                packet = pack_floor(grid['grid'], grid['origin'], CFG_M.voxel_size_m)
+                with heavy_lock:
+                    floor_latest[0] = packet
+                broadcast_heavy(packet)
+            radius = PARAMS['ROBOT_RADIUS_CELLS']
+            if show_inflated_floor and grid is not None and (grid_changed or not inflated_floor_shown or radius != inflated_radius):
+                # Same inflation rule as nav.compute_plan; preview it even with no active route.
+                passable = grid['grid'] == 1
+                passable[distance_transform_edt(passable) < radius] = False
+                packet = pack_floor(passable, grid['origin'], CFG_M.voxel_size_m, packet_type=7)
+                with heavy_lock:
+                    inflated_floor_latest[0] = packet
+                broadcast_heavy(packet)
+                inflated_radius = radius
+            if show_gradient and (plan_changed or origin_changed or not gradient_shown):
+                packet = (pack_heatmap(plan['cost'], grid['origin'], CFG_M.voxel_size_m)
+                          if plan is not None and grid is not None and plan['waypoint_index'] >= 0
+                          else struct.pack('<II', 3, 0) + zlib.compress(b'', 1))
+                with heavy_lock:
+                    heat_latest[0] = packet
+                broadcast_heavy(packet)
+            floor_shown, gradient_shown = show_floor, show_gradient
+            inflated_floor_shown = show_inflated_floor
+            stopping.wait(0.2)
 
 
-def self_do_floor_vis(grid, inflate=True):
-    """Push floor visualization. inflate=True shows the actual passable area after robot-radius
-    inflation — matches what the planner uses."""
-    GS = grid.shape[0]
-    inv = 1.0 / CFG_M.voxel_size_m
-    passable_vis = (grid == 1).copy()
-    if nav_bounds_corners is not None:
-        mask_outside_bounds(passable_vis, nav_bounds_corners, pout.origin, inv, GS)
-    if inflate:
-        # Reuse the replan's own EDT instead of recomputing it — this overlay is meant to
-        # show exactly what the planner used (see docstring), so this isn't just an
-        # optimization, it keeps the display honest. Only falls back to a fresh EDT before
-        # the first replan has run against this grid size (e.g. right after a map switch).
-        dist = pout.dist_field
-        if dist is None or dist.shape != passable_vis.shape:
-            dist = distance_transform_edt(passable_vis)
-        passable_vis[dist < PARAMS['ROBOT_RADIUS_CELLS']] = False
-    vis_grid = np.zeros_like(grid)
-    vis_grid[passable_vis] = 1
-    floor_data = pack_floor(vis_grid, pout.origin, CFG_M.voxel_size_m)
-    if floor_data:
-        floor_latest[0] = floor_data; broadcast_heavy(floor_data)
-        print(f"[plan] floor vis pushed ({len(floor_data)} bytes)", flush=True)
-
-
-# --- Freshness watchdog: EMPIRICAL evidence for "what's actually lagging" ---
-# Logs one line per stall EPISODE (start + end with duration), not a continuous stream, so a
-# `grep '\[fresh\]' /dev/shm/app-reloc_nav*.log` gives a clean timeline you can correlate
-# against `[heavy]` connect/disconnect lines below. If SLAM stalls, that's the slam_v1 daemon.
-# If SLAM keeps ticking but GRID/VOX stall, that's the mapping daemon falling behind SLAM. If
-# neither stalls but the browser still looks stuck, check the [heavy] lines — that's the
-# network/client, not the robot's own pipeline.
 def freshness_watchdog():
     stalled = {'slam': False, 'grid': False, 'vox': False}
     stall_t = {'slam': 0.0, 'grid': 0.0, 'vox': 0.0}
@@ -1621,18 +822,14 @@ def depth_loop():
     replaces the last, unlike the accumulated BBMap/voxel cloud) so it doesn't need — and
     deliberately doesn't get — a fast refresh rate."""
     last_push = 0.0
-    pitch_d = 0.0
+    pitch_rad = 0.0
     with Reader("camera.depth", keeptime=False) as r_depth, \
          Reader("imu.orientation", keeptime=False) as r_imu:
         while True:
             try:
-                # Same live pitch correction the daemon applies to its own extrinsic — delta
-                # from the reference captured at self-calibration time (see compute_depth_calib).
-                if _depth_imu['ref'] is not None and r_imu.ready():
-                    _cur = _depth_imu['drive_sign'] * float(np.asarray(r_imu.data['rpy'])[_depth_imu['idx']])
-                    _dd = _depth_imu['sign'] * (_cur - _depth_imu['ref'])
-                    _lim = _depth_imu['lim']
-                    pitch_d = math.radians(max(-_lim, min(_lim, _dd)))
+                # imu.orientation publishes [roll, pitch, yaw] in degrees.
+                if r_imu.ready():
+                    pitch_rad = math.radians(float(r_imu.data['rpy'][1]))
                 if show_depth and r_depth.ready():
                     now = time.time()
                     if now - last_push >= DEPTH_INTERVAL:
@@ -1643,7 +840,7 @@ def depth_loop():
                             frames += r_depth.data['depth_raw'].tobytes()
                         pos = _shared_pos                       # [x, y, yaw], nav frame
                         header = struct.pack('<ffff', float(pos[0]), float(pos[1]), float(pos[2]),
-                                             float(pitch_d))
+                                             float(pitch_rad))
                         pkt = struct.pack('<II', 6, d.size) + zlib.compress(header + frames, 1)
                         with heavy_lock:            # latest-only slot, NOT the queue (see depth_latest)
                             depth_latest[0] += 1
@@ -1679,7 +876,7 @@ def voxel_loop():
                     if now - last_push >= VOX_INTERVAL:
                         last_push = now
                         nv = int(r_vox.data['num_voxels'])
-                        coords = r_vox.data['coords'][:nv].copy()    # already nav frame (mapping uses T_nav_gl)
+                        coords = r_vox.data['coords'][:nv].copy()    # already in SLAM world coordinates
                         colors = r_vox.data['colors'][:nv].copy()
                         ucell, ucol, ukey = dedup_voxels(coords, colors)
                         # publish authoritative cloud for keyframe builds (exact colors), and
@@ -1741,7 +938,6 @@ body{overflow:hidden;font-family:system-ui;background:#111;color:#fff}
 #wplist .active{color:#0ea5e9;font-weight:bold}
 #wplist .done{color:#333;text-decoration:line-through}
 #info{font:11px monospace;color:#555;position:absolute;bottom:50px;left:10px;z-index:10}
-#bounds-overlay{position:absolute;border:2px dashed #0ea5e9;background:rgba(14,165,233,0.1);pointer-events:none;display:none;z-index:15}
 #diag{position:absolute;bottom:50px;right:10px;z-index:10;background:rgba(0,0,0,0.85);
   border:1px solid #333;border-radius:6px;padding:8px 10px;font:11px/1.6 monospace;color:#888;
   min-width:220px;display:none}
@@ -1786,38 +982,30 @@ body{overflow:hidden;font-family:system-ui;background:#111;color:#fff}
     <button class="btn" id="startbtn" onclick="doStart()">Start</button>
     <button class="btn" id="stopbtn" onclick="doStop()">Stop</button>
     <button class="btn" id="loopbtn" onclick="doLoop()">Loop: OFF</button>
-    <button class="btn" id="globalbtn" onclick="doToggle('global')">Global Goal: OFF</button>
+    <button class="btn" id="globalbtn" onclick="doToggle('global')" title="Target the mapped floor connected to the robot nearest to the requested goal.">Global Goal: OFF</button>
   </div>
   <div class="row">
-    <button class="btn" id="manualbtn" onclick="doToggle('manual')">Manual Drive: OFF</button>
+    <button class="btn" id="manualbtn" onclick="doToggle('manual')" title="Enables balance mode and keyboard driving. Stop returns to the configured default base mode.">Manual Drive: OFF</button>
     <button class="btn" onclick="doUndo()">Undo</button>
     <button class="btn danger" onclick="doClear()">Clear All</button>
   </div>
   <div class="row">
-    <button class="btn" id="drawbtn" onclick="toggleDrawBounds()">Draw Bounds</button>
-    <button class="btn" id="clearbtn" onclick="clearBounds()" style="display:none">Clear Bounds</button>
-  </div>
-  <div class="row">
-    <button class="btn active" id="mapbtn" onclick="doToggle('map')">Auki Map: ON</button>
     <button class="btn" id="navmapbtn" onclick="doToggle('nav_map')">BBMap: OFF</button>
   </div>
   <div class="row">
-    <button class="btn active" id="frontierbtn" onclick="doToggle('frontier')">Auki Path Mode: ON</button>
-  </div>
-  <div class="row">
-    <button class="btn" id="floorbtn" onclick="doToggle('floor')">Floor</button>
+    <button class="btn" id="floorbtn" onclick="doToggle('floor')" title="Cycle Off / Raw / Inflated / Both. Green: raw floor. Cyan: inflation preview using the current map and radius, even while idle.">Floor: OFF</button>
     <button class="btn" id="gradientbtn" onclick="doToggle('gradient')">Gradient</button>
     <button class="btn" id="slambtn" onclick="doToggle('slam_path')">SLAM Path</button>
     <button class="btn" id="depthbtn" onclick="doToggle('depth')">Depth</button>
     <button class="btn" id="chasebtn" onclick="toggleChase()">Chase</button>
     <button class="btn" id="graphbtn" onclick="toggleGraphs()">Graphs</button>
+    <button class="btn" id="exportbtn" onclick="exportMap()">Export Map (.npz)</button>
   </div>
   <div class="row">
-    <button class="btn danger" id="wipebtn" onclick="doWipeMap()">Wipe SLAM + Map</button>
+    <button class="btn danger" id="resetbtn" onclick="doResetMap()">Reset Map</button>
   </div>
   <div id="wplist"></div>
 </div>
-<div id="bounds-overlay"></div>
 <div id="params">
   <div class="phdr">Tuning
     <div class="row">
@@ -1825,17 +1013,16 @@ body{overflow:hidden;font-family:system-ui;background:#111;color:#fff}
       <button class="btn" id="loadp" onclick="loadParams()">Load</button>
     </div>
   </div>
-  <div id="ptip">hover a parameter for details</div>
+  <div id="ptip">Changes save and apply live; hover for details</div>
   <div id="sliders"></div>
 </div>
 <div id="diag"></div>
 <div id="graphs" style="display:none">
   <div class="ghdr">
-    <span>controller</span>
+    <span>drive command</span>
     <span class="grow">
-      <button class="gbtn active" onclick="setGraphGroup('steer',this)">steering ω</button>
-      <button class="gbtn" onclick="setGraphGroup('vfac',this)">speed factors</button>
-      <button class="gbtn" onclick="setGraphGroup('err',this)">tracking error</button>
+      <button class="gbtn active" onclick="setGraphGroup('speed',this)">speed v</button>
+      <button class="gbtn" onclick="setGraphGroup('steer',this)">steering ω</button>
     </span>
   </div>
   <canvas id="gcanvas" width="560" height="150"></canvas>
@@ -1871,36 +1058,6 @@ const voxMat=new THREE.PointsMaterial({size:0.04,vertexColors:true,sizeAttenuati
 const voxPts=new THREE.Points(voxGeo,voxMat);voxPts.frustumCulled=false;scene.add(voxPts);
 voxPts.visible=false;   // the live mapping "Nav Map" overlay is off by default (toggle)
 
-// --- Named COLMAP / slam_viz clouds (LG, LoMa, ...); the Map button cycles which is shown. ---
-// nav frame (z-up) -> three (X=x, Y=z, Z=-y), floor at y=0. Fetched once per cloud from /cloud/<name>.
-const cloudPts={};   // name -> THREE.Points (only the selected one is visible)
-function loadCloud(name){
-  fetch('/cloud/'+name).then(r=>r.arrayBuffer()).then(buf=>{
-    const dv=new DataView(buf);const n=dv.getUint32(0,true);if(n===0)return;
-    const xyz=new Float32Array(buf,4,n*3);const rgb=new Uint8Array(buf,4+n*12,n*3);
-    const pos=new Float32Array(n*3),col=new Float32Array(n*3);
-    for(let i=0;i<n;i++){const o=i*3;
-      pos[o]=xyz[o];pos[o+1]=xyz[o+2];pos[o+2]=-xyz[o+1];
-      col[o]=rgb[o]/255;col[o+1]=rgb[o+1]/255;col[o+2]=rgb[o+2]/255;}
-    const g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-    g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
-    const p=new THREE.Points(g,new THREE.PointsMaterial({size:0.025,vertexColors:true,sizeAttenuation:true}));
-    p.frustumCulled=false;p.visible=false;scene.add(p);cloudPts[name]=p;
-  }).catch(e=>console.warn('cloud '+name+' load failed',e));
-}
-fetch('/clouds').then(r=>r.json()).then(ns=>ns.forEach(loadCloud)).catch(e=>console.warn('clouds list failed',e));
-
-// --- Portal markers (orange cubes at the Auki QR portals) ---
-const portalGrp=new THREE.Group();scene.add(portalGrp);
-fetch('/portals').then(r=>r.json()).then(ps=>{
-  ps.forEach(p=>{
-    const s=Math.max(p.size||0.1,0.08);
-    const m=new THREE.Mesh(new THREE.BoxGeometry(s,s,s),
-      new THREE.MeshBasicMaterial({color:0xffbe00,transparent:true,opacity:0.8}));
-    m.position.set(p.pos[0],p.pos[2],-p.pos[1]);portalGrp.add(m);
-  });
-}).catch(e=>console.warn('No portals:',e));
 // --- Persistent voxel cloud: keyframe + deltas applied in place (slot map + swap-remove) ---
 // The cloud lives in growable typed arrays; each cell occupies a slot, vSlot maps cellkey->
 // slot, vKeyArr is the reverse. Deltas upsert/remove individual cells without rebuilding the
@@ -1939,9 +1096,11 @@ function vCommit(){
   if(voxGeo.attributes.position){voxGeo.attributes.position.needsUpdate=true;voxGeo.attributes.color.needsUpdate=true;}
 }
 
-let floorGeo=new THREE.BufferGeometry();
+const floorGeo=new THREE.BufferGeometry();
 const floorMat=new THREE.PointsMaterial({size:0.03,color:0x10b981,transparent:true,opacity:0.5,sizeAttenuation:true,depthTest:false,depthWrite:false});
-const floorPts=new THREE.Points(floorGeo,floorMat);floorPts.renderOrder=-1;floorPts.visible=false;scene.add(floorPts);
+const floorPts=new THREE.Points(floorGeo,floorMat);floorPts.renderOrder=-2;floorPts.visible=false;scene.add(floorPts);
+const inflatedFloorMat=new THREE.PointsMaterial({size:0.03,color:0x38bdf8,transparent:true,opacity:0.85,sizeAttenuation:true,depthTest:false,depthWrite:false});
+const inflatedFloorPts=new THREE.Points(new THREE.BufferGeometry(),inflatedFloorMat);inflatedFloorPts.renderOrder=-1;inflatedFloorPts.visible=false;scene.add(inflatedFloorPts);
 
 let heatGeo=new THREE.BufferGeometry();
 const heatMat=new THREE.PointsMaterial({size:0.03,vertexColors:true,transparent:true,opacity:0.5,sizeAttenuation:true,depthTest:false,depthWrite:false});
@@ -1991,7 +1150,6 @@ fetch('/robot_mesh').then(r=>{if(!r.ok)throw new Error(r.status);return r.arrayB
 }).catch(e=>console.warn('No robot mesh:',e));
 
 let pathLine=null,goalMk=null,slamLine=null,predLine=null;
-const routeGrp=new THREE.Group();scene.add(routeGrp);   // global-mode 0.2m breadcrumbs
 let slamTrail=[];   // accumulated live robot positions (client-side, monotonic)
 let lastRebuildCount=-1,lastRebuildAt=0;   // rebuild banner: flash red for 8s when mapping.rebuild.count changes
 let lastMapGen=0;  // last map_gen we rendered; wipe bumps this and we drop the trail
@@ -2081,7 +1239,7 @@ window.goLive=()=>{
 // server (that flips LIVE state the scrubbed view doesn't render — clicks looked dead).
 // Instead the toggle is applied locally on top of the historical frame, and cleared on LIVE.
 const scrubOverride={};
-const SCRUB_VIEW_KEYS=new Set(['floor','gradient','slam_path','nav_map','depth','map']);
+const SCRUB_VIEW_KEYS=new Set(['floor','gradient','slam_path','nav_map','depth']);
 let scrubIdx=-1;
 function renderScrub(idx){
   const s=tlGet(idx);
@@ -2089,8 +1247,7 @@ function renderScrub(idx){
   scrubIdx=idx;
   const sv=Object.assign({},s);
   for(const k in scrubOverride){
-    if(k==='map')sv.cloud_source=scrubOverride[k];
-    else sv[k]=scrubOverride[k];
+    sv[k]=scrubOverride[k];
   }
   const offset=(Date.now()-s._ts)/1000;
   document.getElementById('scrub-time').textContent='-'+offset.toFixed(1)+'s';
@@ -2106,7 +1263,8 @@ function renderScrub(idx){
   }
   // Floor/gradient only have live-latest geometry (no history) — toggling them on while
   // scrubbed shows the most recent overlay, which beats showing nothing.
-  if(sv.floor&&floorGeo.attributes&&floorGeo.attributes.position)floorPts.visible=true;
+  if((sv.floor===1||sv.floor===3)&&floorPts.geometry.attributes.position)floorPts.visible=true;
+  if((sv.floor===2||sv.floor===3)&&inflatedFloorPts.geometry.attributes.position)inflatedFloorPts.visible=true;
   if(sv.gradient&&heatGeo.attributes&&heatGeo.attributes.position)heatPts.visible=true;
   // Depth snapshot; hidden when the layer is off or no snapshot is close enough — a frame
   // from "now" shown against a scrubbed-back pose would be silently misleading.
@@ -2132,46 +1290,19 @@ document.getElementById('scrub').addEventListener('input',function(){
 // --- Diagnostics overlay ---
 function updateDiag(d){
   const el=document.getElementById('diag');
-  if(!d||Object.keys(d).length===0){el.style.display='none';return;}
+  if(!d){el.style.display='none';return;}
   el.style.display='';
-  function cv(v,wt,dt,inv){
-    if(v==null||v===undefined)return'<span style="color:#555">--</span>';
-    let c='';
-    if(inv){if(v<dt)c='d';else if(v<wt)c='w';}
-    else{if(Math.abs(v)>dt)c='d';else if(Math.abs(v)>wt)c='w';}
-    return c?'<span class="'+c+'">'+v+'</span>':''+v;
-  }
-  const stc=d.st==='NO PATH'?'d':d.st==='ROTATING'?'w':'';
-  const stk=(d.stk!=null?d.stk:15);
-  el.innerHTML=[
-    'state <b><span class="'+stc+'">'+(d.st||'--')+'</span></b>'+(d.tr!=null?' '+d.tr+'s rotating':'')+' rescans '+(d.rot||'--'),
-    'no-progress '+cv(d.tp,stk*0.6,stk)+'s / '+(d.stk!=null?d.stk:'--')+'s \u2192 rotate',
-    '\u2500\u2500\u2500',
-    'v='+cv(d.v,99,99)+' w='+cv(d.w,99,99)+' la='+cv(d.la,99,99),
-    'cte='+cv(d.cte,10,20)+'cm he='+cv(d.he,17,46)+'\u00b0',
-    'rpt='+cv(d.rpt,150,250)+'ms pc='+cv(d.pc,99,99),
-    'dw='+cv(d.dw,0.33,0.20,true)+'m dg='+cv(d.dg,99,99)+'m',
-    'dp='+cv(d.dp,99,99)+'m rc='+cv(d.rc,99,99)+' gc='+cv(d.gc,99,99),
-    '───',
-    'ω: pp='+cv(d.t_pp,99,99)+' P='+cv(d.t_p,99,99)+' D='+cv(d.t_d,99,99),
-    'v×: op='+cv(d.f_op,9,9)+' tn='+cv(d.f_tn,9,9)+' al='+cv(d.f_al,9,9)+' cl='+cv(d.f_cl,9,9),
-  ].join('<br>');
+  el.textContent='command v='+d.v+' m/s  ω='+d.w+' rad/s';
 }
 
-// --- Controller time-series graphs ---
+// Commanded velocities from drive.ctrl.
 const GRAPH_GROUPS={
-  steer:{mode:'center',series:[
-    {k:'w',c:'#ffffff',l:'ω'},{k:'t_pp',c:'#22d3ee',l:'pursuit'},
-    {k:'t_p',c:'#f59e0b',l:'cte·P'},{k:'t_d',c:'#ff3df0',l:'cte·D'}]},
-  vfac:{mode:'unit',series:[
-    {k:'f_op',c:'#f59e0b',l:'off-path'},{k:'f_tn',c:'#ff3df0',l:'turn'},
-    {k:'f_al',c:'#22d3ee',l:'align'},{k:'f_cl',c:'#a78bfa',l:'clear'}]},
-  err:{mode:'center',series:[
-    {k:'cte',c:'#ef4444',l:'cte(cm)'},{k:'he',c:'#0ea5e9',l:'he(°)'}]},
+  speed:{mode:'center',series:[{k:'v',c:'#22d3ee',l:'v (m/s)'}]},
+  steer:{mode:'center',series:[{k:'w',c:'#ffffff',l:'ω (rad/s)'}]},
 };
-const GALL=['w','t_pp','t_p','t_d','f_op','f_tn','f_al','f_cl','cte','he'];
-const GN=1500; const gbuf={}; GALL.forEach(k=>gbuf[k]=[]);   // ~3min of controller history at 8Hz
-let graphGroup='steer', showGraph=false;
+const GALL=['v','w'];
+const GN=1500; const gbuf={}; GALL.forEach(k=>gbuf[k]=[]);
+let graphGroup='speed', showGraph=false;
 function gpush(d){
   if(!d)return;
   GALL.forEach(k=>{const a=gbuf[k];a.push(d[k]!=null?d[k]:0);if(a.length>GN)a.shift();});
@@ -2206,11 +1337,8 @@ window.setGraphGroup=(grp,btn)=>{graphGroup=grp;
   document.querySelectorAll('#graphs .gbtn').forEach(b=>b.className='gbtn');
   if(btn)btn.className='gbtn active';drawGraph();};
 
-// Double-click to add waypoint (but not during draw mode)
-let drawMode=false;
 // double-click = quick waypoint, NO heading (skips the final turn)
 renderer.domElement.addEventListener('dblclick',e=>{
-  if(drawMode)return;
   if(aimWp)cancelAim();
   const pt=groundAt(e.clientX,e.clientY);
   if(pt&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'add_wp',x:pt.x,y:-pt.z}));
@@ -2234,7 +1362,7 @@ renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 // would otherwise swallow the click). stopPropagation keeps OrbitControls from rotating.
 // The ctrl/cmd modifier is only required to START aiming; the 2nd click (lock) is a plain click.
 renderer.domElement.addEventListener('pointerdown',e=>{
-  if(drawMode||e.button!==0)return;
+  if(e.button!==0)return;
   if(!aimWp){
     if(!(e.ctrlKey||e.metaKey))return;               // start needs the modifier
     e.stopPropagation();e.preventDefault();
@@ -2258,29 +1386,23 @@ renderer.domElement.addEventListener('pointermove',e=>{
 });
 window.addEventListener('keydown',e=>{ if(e.key==='Escape')cancelAim(); });
 
+window.exportMap=()=>{window.location.href='/export_map';};
 window.doStart=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'start'}));};
 window.doStop=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'stop'}));};
 window.doLoop=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'loop'}));};
 window.doUndo=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'remove_last'}));};
 window.doClear=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'clear'}));};
-window.doWipeMap=()=>{
-  if(!confirm('Wipe the live SLAM map and occupancy map? This cannot be undone.\n\nSLAM and mapping will restart from scratch at the current pose.'))return;
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'wipe_map'}));
+window.doResetMap=()=>{
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'reset_map'}));
 };
 window.doToggle=(key)=>{
   // While scrubbed, display-layer toggles are view-local overrides on the historical frame
-  // (behavioral toggles — manual/global/frontier — still go to the server as usual).
+  // (manual driving still goes to the server).
   if(!isLive&&SCRUB_VIEW_KEYS.has(key)){
     const s=tlGet(scrubIdx);
     if(!s)return;
-    if(key==='map'){
-      const order=['off'].concat(s.cloud_names||[]);
-      const cur=('map' in scrubOverride)?scrubOverride['map']:(s.cloud_source||'off');
-      scrubOverride['map']=order[(Math.max(0,order.indexOf(cur))+1)%order.length];
-    }else{
-      const cur=(key in scrubOverride)?scrubOverride[key]:!!s[key];
-      scrubOverride[key]=!cur;
-    }
+    const cur=(key in scrubOverride)?scrubOverride[key]:s[key];
+    scrubOverride[key]=key==='depth'?((Number(cur)||0)+1)%3:key==='floor'?((Number(cur)||0)+1)%4:!cur;
     renderScrub(scrubIdx);
     return;
   }
@@ -2303,16 +1425,16 @@ const PARAM_META=[
   ['ROBOT_RADIUS_CELLS',3,25,1,'Obstacle inflation radius in grid cells (robot half-width)'],
   ['PROX_WEIGHT',0,50000,1000,'Soft wall-repulsion weight (higher = hug corridor center)'],
   ['REPLAN_INTERVAL',0.1,2,0.1,'Seconds between planner replans'],
-  ['SMOOTH_V',0.05,1,0.05,'Forward-speed low-pass (higher = snappier, less smoothing)'],
-  ['SMOOTH_W',0.05,1,0.05,'Turn-rate low-pass (higher = snappier, less smoothing)'],
+  ['SMOOTH_V',0,1,0.05,'Previous-speed weight: 0 = no smoothing, 1 = hold previous speed'],
+  ['SMOOTH_W',0,1,0.05,'Previous-turn-rate weight: 0 = no smoothing, 1 = hold previous turn rate'],
   ['GOAL_TOLERANCE',0,0.3,0.01,'Arrival radius — how close counts as reaching the goal (m)'],
   ['HEADING_OMEGA',0,1.0,0.05,'Final heading turn speed (rad/s) — constant, slam_reloc style'],
   ['HEADING_TOL',0.02,0.5,0.01,'Final heading tolerance — aligned when |error| below this (rad)'],
   ['STUCK_TIME',1,60,1,'Seconds of no progress before it rotates in place to rescan'],
   ['ROTATE_TIME',0.5,10,0.5,'Seconds spent rotating per rescan before replanning'],
   ['ROTATE_FRAC',0.1,1,0.05,'Rescan rotate speed as a fraction of MAX_OMEGA'],
-  ['PROGRESS_EPS',0.02,0.5,0.01,'Goal-distance drop (m) that counts as progress (resets the stuck timer)'],
-  ['N_ROTATIONS',1,20,1,'Rescans before it skips the waypoint (patrol mode only)'],
+  ['PROGRESS_EPS',0.02,0.5,0.01,'Robot movement (m) that resets the stuck timer'],
+  ['N_ROTATIONS',1,20,1,'Rescans before navigation reports failed'],
 ];
 function buildSliders(){
   document.getElementById('sliders').innerHTML=PARAM_META.map(([k,mn,mx,st,expl],i)=>
@@ -2322,7 +1444,7 @@ function buildSliders(){
   ).join('');
 }
 window.showTip=(i)=>{document.getElementById('ptip').textContent=PARAM_META[i][0]+': '+PARAM_META[i][4];};
-window.clearTip=()=>{document.getElementById('ptip').textContent='hover a parameter for details';};
+window.clearTip=()=>{document.getElementById('ptip').textContent='Changes save and apply live; hover for details';};
 window.onSlider=(k)=>{
   const v=parseFloat(document.getElementById('ps_'+k).value);
   document.getElementById('pv_'+k).textContent=v;
@@ -2337,72 +1459,9 @@ function applyParams(p){
 }
 window.saveParams=()=>{
   if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'save_params'}));
-  const b=document.getElementById('savep');b.textContent='Saved';setTimeout(()=>b.textContent='Save',1000);
 };
 window.loadParams=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'load_params'}));};
 buildSliders();
-
-// --- Draw bounds ---
-let drawStart=null,boundsRect=null;
-const bov=document.getElementById('bounds-overlay');
-function groundHit(sx,sy){
-  const m=new THREE.Vector2((sx/innerWidth)*2-1,-(sy/innerHeight)*2+1);
-  const rc=new THREE.Raycaster();rc.setFromCamera(m,cam);
-  const pl=new THREE.Plane(new THREE.Vector3(0,1,0),0);
-  const pt=new THREE.Vector3();
-  return rc.ray.intersectPlane(pl,pt)?pt:null;
-}
-window.toggleDrawBounds=()=>{
-  drawMode=!drawMode;
-  const b=document.getElementById('drawbtn');
-  b.className=drawMode?'btn active':'btn';
-  b.textContent=drawMode?'Drawing...':'Draw Bounds';
-  renderer.domElement.style.cursor=drawMode?'crosshair':'';
-  ctrl.enabled=!drawMode;
-};
-window.clearBounds=()=>{
-  if(boundsRect){scene.remove(boundsRect);boundsRect.geometry.dispose();boundsRect=null;}
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'nav_bounds',corners:null}));
-  document.getElementById('clearbtn').style.display='none';
-};
-renderer.domElement.addEventListener('mousedown',e=>{
-  if(!drawMode||e.button!==0)return;
-  drawStart={x:e.clientX,y:e.clientY};
-  bov.style.display='block';bov.style.left=e.clientX+'px';bov.style.top=e.clientY+'px';
-  bov.style.width='0px';bov.style.height='0px';
-});
-renderer.domElement.addEventListener('mousemove',e=>{
-  if(!drawMode||!drawStart)return;
-  const x0=Math.min(drawStart.x,e.clientX),y0=Math.min(drawStart.y,e.clientY);
-  bov.style.left=x0+'px';bov.style.top=y0+'px';
-  bov.style.width=Math.abs(e.clientX-drawStart.x)+'px';
-  bov.style.height=Math.abs(e.clientY-drawStart.y)+'px';
-});
-renderer.domElement.addEventListener('mouseup',e=>{
-  if(!drawMode||!drawStart)return;
-  bov.style.display='none';
-  const sx0=drawStart.x,sy0=drawStart.y,sx1=e.clientX,sy1=e.clientY;
-  drawStart=null;
-  const c0=groundHit(sx0,sy0),c1=groundHit(sx1,sy0),c2=groundHit(sx1,sy1),c3=groundHit(sx0,sy1);
-  if(!c0||!c1||!c2||!c3)return;
-  if(ws&&ws.readyState===1){
-    ws.send(JSON.stringify({type:'nav_bounds',corners:[[c0.x,-c0.z],[c1.x,-c1.z],[c2.x,-c2.z],[c3.x,-c3.z]]}));
-  }
-  if(boundsRect){scene.remove(boundsRect);boundsRect.geometry.dispose();}
-  const corners=[
-    new THREE.Vector3(c0.x,0.02,c0.z),new THREE.Vector3(c1.x,0.02,c1.z),
-    new THREE.Vector3(c2.x,0.02,c2.z),new THREE.Vector3(c3.x,0.02,c3.z),
-  ];
-  boundsRect=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(corners),
-    new THREE.LineBasicMaterial({color:0x0ea5e9}));
-  scene.add(boundsRect);
-  drawMode=false;
-  document.getElementById('drawbtn').className='btn';
-  document.getElementById('drawbtn').textContent='Draw Bounds';
-  document.getElementById('clearbtn').style.display='';
-  renderer.domElement.style.cursor='';
-  ctrl.enabled=true;
-});
 
 // Keyframe chunk (type 4): header [bx by bz int32, res f32, first u32], then u16x3 cells,
 // then u8x3 colors. first=1 resets the cloud (start of a fresh keyframe); chunks append.
@@ -2442,17 +1501,16 @@ function applyVoxDelta(raw){
   }
   vCommit();
 }
-function updateFloor(raw,n){
-  if(n<=0){floorPts.visible=false;return;}
+function updateFloor(raw,n,points=floorPts){
   const cf=new Float32Array(raw.buffer,raw.byteOffset,n*3);
   const pos=new Float32Array(n*3);
   for(let i=0;i<n;i++){pos[i*3]=cf[i*3];pos[i*3+1]=cf[i*3+2];pos[i*3+2]=-cf[i*3+1];}
-  floorGeo.dispose();floorGeo=new THREE.BufferGeometry();
-  floorGeo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-  floorPts.geometry=floorGeo;floorPts.visible=true;
+  points.geometry.dispose();
+  points.geometry=new THREE.BufferGeometry();
+  points.geometry.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  if(n===0)points.visible=false;
 }
 function updateHeatmap(raw,n){
-  if(n<=0){heatPts.visible=false;return;}
   const buf=raw.buffer;
   const pos=new Float32Array(n*3);const col=new Float32Array(n*3);
   const cf=new Float32Array(buf,raw.byteOffset,n*3);
@@ -2464,29 +1522,27 @@ function updateHeatmap(raw,n){
   heatGeo.dispose();heatGeo=new THREE.BufferGeometry();
   heatGeo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
   heatGeo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
-  heatPts.geometry=heatGeo;heatPts.visible=true;
+  heatPts.geometry=heatGeo;heatPts.visible=n>0;
 }
-// Depth packet: [pos_x f32][pos_y f32][yaw f32][pitch_delta f32][depth u16 x w*h, row-major, mm].
-// Unprojects camera-frame pinhole rays -> base frame (T_base_cam) -> nav frame (robot pose at
+// Depth packet: [pos_x f32][pos_y f32][yaw f32][pitch_rad f32][depth u16 x w*h, row-major, mm].
+// Unprojects camera-frame pinhole rays -> base frame (base_from_cam) -> nav frame (robot pose at
 // capture) -> three.js axes (same X=navX,Y=navZ,Z=-navY convention as everywhere else here).
 // forward(h)=(-sin h,cos h) matches robotGrp.rotation.y and the server's own control-loop
 // velocity integration — verified against both before writing this transform.
 function updateDepth(raw){
   if(!depthCalib)return;
-  const{fx,fy,cx,cy,w,h,T_base_cam:T}=depthCalib;
-  const maxd=depthCalib.max_d||5, maxmm=maxd*1000;   // depth_b's points-stage range gate
-  const maxr=depthCalib.max_r||0, maxr2=maxr*maxr;   // horizontal base-frame radius cut (0=off)
+  const{fx,fy,cx,cy,w,h,base_from_cam}=depthCalib;
+  const maxd=depthCalib.max_d||5;   // grayscale display scale
   const dv=new DataView(raw.buffer,raw.byteOffset,16);
   const px=dv.getFloat32(0,true),py=dv.getFloat32(4,true),ph=dv.getFloat32(8,true),pd=dv.getFloat32(12,true);
   const depth=new Uint16Array(raw.buffer,raw.byteOffset+16,w*h);
   const hasRaw=raw.byteLength>=16+w*h*4;   // RAW mode: the unfiltered frame rides behind the normal one
   const rawd=hasRaw?new Uint16Array(raw.buffer,raw.byteOffset+16+w*h*2,w*h):null;
-  // Live IMU pitch: T3' = T3 @ [[1,0,0],[0,c,s],[0,-s,c]] — byte-identical composition to the
-  // daemon's own las2_depth_set_camera_to_base update, using the delta shipped per frame.
+  // Apply the signed absolute IMU pitch shipped in radians with this frame.
   const cpd=Math.cos(pd),spd=Math.sin(pd);
-  const R01=cpd*T[1]-spd*T[2],  R02=spd*T[1]+cpd*T[2];
-  const R11=cpd*T[5]-spd*T[6],  R12=spd*T[5]+cpd*T[6];
-  const R21=cpd*T[9]-spd*T[10], R22=spd*T[9]+cpd*T[10];
+  const R01=cpd*base_from_cam[1]-spd*base_from_cam[2],  R02=spd*base_from_cam[1]+cpd*base_from_cam[2];
+  const R11=cpd*base_from_cam[5]-spd*base_from_cam[6],  R12=spd*base_from_cam[5]+cpd*base_from_cam[6];
+  const R21=cpd*base_from_cam[9]-spd*base_from_cam[10], R22=spd*base_from_cam[9]+cpd*base_from_cam[10];
   const sh=Math.sin(ph),ch=Math.cos(ph);
   // Match the daemon's own sampling: camera.points strides the FLAT pixel index by 2, which
   // on a row-major image = every other column of every row (u+=2, v+=1) — not both axes.
@@ -2498,12 +1554,11 @@ function updateDepth(raw){
   const put=(u,v,dmm,red)=>{
     const z=dmm/1000;                                 // camera frame (OpenCV: X=right,Y=down,Z=fwd)
     const xc=(u-cx)*z/fx,yc=(v-cy)*z/fy;
-    const bx=T[0]*xc+R01*yc+R02*z+T[3];               // camera -> base (pitch-corrected)
-    const by=T[4]*xc+R11*yc+R12*z+T[7];
-    const bz=T[8]*xc+R21*yc+R22*z+T[11];
-    if(maxr2>0&&bx*bx+by*by>maxr2)return;   // same horizontal cut the daemon applies for mapping
+    const bx=base_from_cam[0]*xc+R01*yc+R02*z+base_from_cam[3];               // camera -> base (pitch-corrected)
+    const by=base_from_cam[4]*xc+R11*yc+R12*z+base_from_cam[7];
+    const bz=base_from_cam[8]*xc+R21*yc+R22*z+base_from_cam[11];
     // base -> nav: base Y is forward, base X is lateral (verified numerically against
-    // T_base_cam — a center-pixel ray comes out almost entirely on the Y axis, not X).
+    // base_from_cam — a center-pixel ray comes out almost entirely on the Y axis, not X).
     // forward(h)=(-sin h,cos h) (matches robotGrp.rotation.y / control loop); right(h) is
     // forward rotated -90 deg = (cos h,sin h).
     const navX=px+(-sh)*by+(ch)*bx;
@@ -2517,12 +1572,12 @@ function updateDepth(raw){
   for(let v=0;v<h;v++){
     for(let u=0;u<w;u+=2){
       const i=v*w+u,dn=depth[i];
-      if(dn!==0&&dn<=maxmm)put(u,v,dn,false);   // 0 = daemon's baked-in confidence mask; >max = its points range gate
+      if(dn!==0)put(u,v,dn,false);   // rejected pixels are already zeroed by the daemon
       if(!hasRaw)continue;
       // raw is the unfiltered twin of normal, so where they agree it is redundant: only what the
       // filter removed (normal=0) or moved by more than DEPTH_DIFF_MM is drawn, in red
       const dr=rawd[i];
-      if(dr!==0&&dr<=maxmm&&(dn===0||Math.abs(dr-dn)>DEPTH_DIFF_MM))put(u,v,dr,true);
+      if(dr!==0&&(dn===0||Math.abs(dr-dn)>DEPTH_DIFF_MM))put(u,v,dr,true);
     }
   }
   tlRecordDepth(pos,col,n);
@@ -2547,7 +1602,7 @@ function updateState(s){
     const curve=new THREE.CatmullRomCurve3(pts);
     pathLine=new THREE.Mesh(new THREE.TubeGeometry(curve,pts.length,0.02,6,false),new THREE.MeshBasicMaterial({color:0x0ea5e9,depthTest:false}));
     scene.add(pathLine);
-  }
+  }else if(pathLine){scene.remove(pathLine);pathLine.geometry.dispose();pathLine=null;}
   // Predicted controller trajectory (magenta) — where the current twist leads
   if(s.pred&&s.pred[0].length>1){
     if(predLine){scene.remove(predLine);predLine.geometry.dispose();}
@@ -2556,14 +1611,6 @@ function updateState(s){
     predLine=new THREE.Mesh(new THREE.TubeGeometry(curve,pts.length,0.018,6,false),new THREE.MeshBasicMaterial({color:0xff3df0,depthTest:false}));
     scene.add(predLine);
   }else if(predLine){scene.remove(predLine);predLine.geometry.dispose();predLine=null;}
-  // Global-mode breadcrumbs every 0.2m along the mapped-floor route to the goal
-  routeGrp.clear();
-  if(s.route_wps){
-    s.route_wps.forEach(p=>{
-      const m=new THREE.Mesh(new THREE.SphereGeometry(0.045),new THREE.MeshBasicMaterial({color:0x22d3ee,depthTest:false}));
-      m.position.set(p[0],0.12,-p[1]);routeGrp.add(m);
-    });
-  }
   // SLAM trail (yellow) — accumulate live positions client-side; only grows, no resample churn
   if(s.slam_path){
     let changed=false;
@@ -2608,27 +1655,26 @@ function updateState(s){
     }
   }
   // Toggle buttons
-  const fb=document.getElementById('floorbtn');fb.className=s.floor?'btn active':'btn';fb.textContent=s.floor?'Floor: ON':'Floor';
+  const fb=document.getElementById('floorbtn');fb.className=s.floor?'btn active':'btn';fb.textContent=['Floor: OFF','Floor: RAW','Floor: INFLATED','Floor: BOTH'][s.floor|0];
   const gb=document.getElementById('gradientbtn');gb.className=s.gradient?'btn active':'btn';gb.textContent=s.gradient?'Gradient: ON':'Gradient';
   const db=document.getElementById('depthbtn');db.className=s.depth?'btn active':'btn';db.textContent=['Depth','Depth: NORMAL','Depth: RAW'][s.depth|0]||'Depth';
   const sb2=document.getElementById('slambtn');sb2.className=s.slam_path?'btn active':'btn';sb2.textContent=s.slam_path?'SLAM: ON':'SLAM Path';
-  const mpb=document.getElementById('mapbtn');const cs=s.cloud_source||'off';
-  mpb.className=cs==='off'?'btn':'btn active';mpb.textContent='Auki Map: '+(cs==='off'?'OFF':'ON');
-  for(const nm in cloudPts){cloudPts[nm].visible=(nm===cs);}
   const nmb=document.getElementById('navmapbtn');nmb.className=s.nav_map?'btn active':'btn';nmb.textContent=s.nav_map?'BBMap: ON':'BBMap: OFF';
   voxPts.visible=!!s.nav_map;
-  if(!s.floor)floorPts.visible=false;
-  if(!s.gradient)heatPts.visible=false;
+  floorPts.visible=(s.floor===1||s.floor===3)&&!!floorPts.geometry.attributes.position&&floorPts.geometry.attributes.position.count>0;
+  inflatedFloorPts.visible=(s.floor===2||s.floor===3)&&!!inflatedFloorPts.geometry.attributes.position&&inflatedFloorPts.geometry.attributes.position.count>0;
+  heatPts.visible=!!s.gradient&&!!heatGeo.attributes.position&&heatGeo.attributes.position.count>0;
   if(!s.depth)depthPts.visible=false;
   // Loop/start
   const lb=document.getElementById('loopbtn');lb.textContent=s.loop?'Loop: ON':'Loop: OFF';lb.className=s.loop?'btn active':'btn';
-  const gbtn=document.getElementById('globalbtn');gbtn.textContent=s.global?'Global Goal: ON':'Global Goal: OFF';gbtn.className=s.global?'btn active':'btn';
-  const fbtn=document.getElementById('frontierbtn');
-  if(fbtn){fbtn.className=s.frontier?'btn active':'btn';fbtn.textContent=s.frontier?'Auki Path Mode: ON':'Auki Path Mode: OFF';}
+  const gbtn=document.getElementById('globalbtn');gbtn.textContent=s.global?'Global Goal: ON':'Global Goal: OFF';gbtn.className=s.global?'btn active':'btn';gbtn.disabled=!!s.resetting;
   const mbtn=document.getElementById('manualbtn');mbtn.textContent=s.manual?'Manual Drive: ON':'Manual Drive: OFF';mbtn.className=s.manual?'btn active':'btn';
   manualDrive=!!s.manual;
   const wm=document.getElementById('wasdmode');if(wm)wm.textContent=s.manual?'DRIVE robot':'fly cam';
   const stb=document.getElementById('startbtn');stb.className=s.running?'btn active':'btn';stb.textContent=s.running?'Running':'Start';
+  stb.disabled=!!s.resetting;mbtn.disabled=!!s.resetting;
+  const resetbtn=document.getElementById('resetbtn');resetbtn.disabled=!!s.resetting;
+  resetbtn.textContent=s.resetting?'Resetting…':'Reset Map';
   const rb=document.getElementById('rebuild'),r=s.rebuild;
   if(rb&&r){
     if(lastRebuildCount<0)lastRebuildCount=r.count;   // first state after (re)connect: no flash for an old rebuild
@@ -2638,12 +1684,6 @@ function updateState(s){
     else if(r.count>0){rb.className=fresh?'fresh':'';rb.textContent=(fresh?'MAP REBUILD #':'last rebuild #')+r.count+' merged at frame '+r.frame+': floor moved '+r.moved+', emptied '+r.emptied+', filled '+r.filled+(fresh||r.age===null?'':' ('+Math.round(r.age)+'s ago)');}
     else{rb.className='';rb.textContent='';}
   }
-  const wb=document.getElementById('wipebtn');
-  if(wb){
-    const wiping=!!(s.status&&String(s.status).startsWith('wiping'));
-    wb.disabled=wiping;
-    wb.textContent=wiping?'Wiping…':'Wipe SLAM + Map';
-  }
   if(s.map_gen!==undefined && s.map_gen!==lastMapGen){
     lastMapGen=s.map_gen;
     slamTrail=[];
@@ -2652,12 +1692,9 @@ function updateState(s){
   // Status
   const el=document.getElementById('status');
   const st=s.status||'';
-  if(st.startsWith('wiping')||st.startsWith('wipe failed')){
-    el.textContent=st;el.style.color=st.startsWith('wipe failed')?'#ef4444':'#f59e0b';
-  }else if(s.ready===false){el.textContent=st.startsWith('wiped')?st:'connected — waiting for SLAM (show the robot a wall QR)';el.style.color='#f59e0b';}
-  else if(s.status&&s.running){el.textContent=s.status;el.style.color=s.status.includes('stuck')||s.status.includes('no path')?'#ef4444':'#10b981';}
-  else if(!s.running&&s.waypoints&&s.waypoints.length>0){el.textContent=s.status==='patrol complete'?'Patrol complete!':`${s.waypoints.length} waypoints set`;el.style.color=s.status==='patrol complete'?'#f59e0b':'#10b981';}
-  else{el.textContent='Double-click map to add waypoints';el.style.color='#888';}
+  el.textContent=st==='idle'?(s.waypoints?.length?`${s.waypoints.length} waypoints set`:'Double-click map to add waypoints'):st;
+  if(s.ready===false)el.textContent+=' — waiting for SLAM';
+  el.style.color=st.startsWith('failed')||st.includes('owned')?'#ef4444':s.running?'#10b981':'#f59e0b';
   if(s.waypoints){
     document.getElementById('wplist').innerHTML=s.waypoints.map((w,i)=>{
       const cls=s.running&&i===s.wp?'active':s.running&&i<s.wp?'done':'';
@@ -2690,6 +1727,9 @@ function connect(){   // REALTIME socket: state + params (text), commands out. N
         latestState=m;                       // rendered by the rAF loop; backlog is dropped
       }else if(m.t==='params'){
         applyParams(m.params);
+        if(m.saved){
+          const b=document.getElementById('savep');b.textContent='Saved';setTimeout(()=>b.textContent='Save',1000);
+        }
         if(m.loaded!==undefined){
           const b=document.getElementById('loadp');
           b.textContent=m.loaded?'Loaded':'No file';setTimeout(()=>b.textContent='Load',1200);
@@ -2717,6 +1757,7 @@ function connectHeavy(){   // HEAVY socket: voxel cloud + floor/gradient (binary
       if(t===4){applyVoxChunk(raw,n);tlRecordVox();}
       else if(t===5){applyVoxDelta(raw);tlRecordVox();}
       else if(t===2){updateFloor(raw,n);}
+      else if(t===7){updateFloor(raw,n,inflatedFloorPts);}
       else if(t===3){updateHeatmap(raw,n);}
       else if(t===6){updateDepth(raw);}
     }catch(err){console.error(err);}
@@ -2849,24 +1890,43 @@ async def serve_robot_mesh():
     from fastapi.responses import Response
     return Response(content=robot_mesh_bytes, media_type="application/octet-stream")
 
-@app.get("/clouds")
-async def serve_cloud_names():
-    return list(map_clouds)
-
-@app.get("/cloud/{name}")
-async def serve_cloud(name: str):
-    # Named nav-frame cloud: [nv u32][xyz f32*3][rgb u8*3]. Sent once per cloud.
-    from fastapi.responses import Response
-    return Response(content=map_clouds.get(name, b'\x00\x00\x00\x00'), media_type="application/octet-stream")
-
-@app.get("/portals")
-async def serve_portals():
-    from fastapi.responses import Response
-    return Response(content=portals_json, media_type="application/json")
+@app.get("/export_map")
+def export_map():
+    reader = Reader("mapping.voxels", keeptime=False)
+    try:
+        if not reader.ready():
+            raise HTTPException(503, "No map is available yet.")
+        data = reader.data
+        timestamp_ns = int(data['timestamp'].astype('int64'))
+        if not 0 <= time.time_ns() - timestamp_ns < 5_000_000_000:
+            raise HTTPException(503, "The map is stale. Wait for mapping to update.")
+        count = int(data['num_voxels'])
+        if count == 0:
+            raise HTTPException(503, "The map is empty. Capture some of the scene first.")
+        calibration = Path(Config('depth').calib_path).read_bytes()
+        metadata = dict(schema_version=1, frame='slam_map', units='metres', up_axis='z',
+                        colors='RGB uint8, 0..255', source='mapping.voxels',
+                        scope='Current published map; distant tiles paged to disk may be absent.',
+                        map_directory=str(CFG_M.map_dir),
+                        calibration_sha256=hashlib.sha256(calibration).hexdigest(),
+                        threejs_transform='[x, y, z] -> [x, z, -y]')
+        output = io.BytesIO()
+        np.savez_compressed(output, points=data['coords'][:count], colors=data['colors'][:count],
+                            labels=data['labels'][:count], robot_pos_xy=data['robot_pos'],
+                            robot_heading=data['robot_heading'], timestamp_ns=np.int64(timestamp_ns),
+                            voxel_size_m=np.float32(CFG_M.voxel_size_m),
+                            metadata_json=np.array(json.dumps(metadata)),
+                            calibration_yaml=np.array(calibration.decode()))
+        filename = 'bracketbot-map-' + time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-UTC.npz'
+        return Response(output.getvalue(), media_type='application/octet-stream',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}"',
+                                 'Cache-Control': 'no-store'})
+    finally:
+        reader.__exit__(None, None, None)
 
 @app.get("/depth_calib")
 async def serve_depth_calib():
-    return depth_calib or {}
+    return depth_calib
 
 @app.websocket("/ws")
 async def ws_ep(ws: WebSocket):
@@ -2890,14 +1950,13 @@ async def ws_ep(ws: WebSocket):
                     await asyncio.sleep(0.01)
 
         async def rx():
-            global show_floor, show_gradient, show_slam_path
             while True:
                 raw = await ws.receive_text()
                 msg = json.loads(raw)
                 t = msg.get('type')
-                if t in ('add_wp','start','stop','loop','clear','remove_last','nav_bounds','toggle',
-                         'set_param','save_params','load_params','teleop','wipe_map'):
-                    cmd_queue.put_nowait(msg if t != 'loop' else {'type':'loop','enabled': not patrol_loop})
+                if t in ('add_wp','start','stop','loop','clear','remove_last','toggle',
+                         'set_param','save_params','load_params','teleop','reset_map'):
+                    cmd_queue.put_nowait(msg)
 
         await asyncio.gather(tx(), rx(), return_exceptions=True)
     except (WebSocketDisconnect, Exception):
@@ -2934,7 +1993,7 @@ async def heavy_ep(ws: WebSocket):
                     # CPU going into repeated pack_vox_keyframe_chunks calls for the same data).
                     chunks = vox_keyframe_cache[0]
                     if chunks is None and vox_state['cell'] is not None:
-                        # NOT decimated to MAX_BROWSER_POINTS here: voxel_loop's delta diffing
+                        # No decimation here: voxel_loop's delta diffing
                         # runs against the full (undecimated) cloud, so a client that received
                         # a decimated keyframe would get deltas referencing cells it was never
                         # sent — that's a real correctness bug, not just a perf question, so
@@ -2942,15 +2001,17 @@ async def heavy_ep(ws: WebSocket):
                         chunks = pack_vox_keyframe_chunks(vox_state['cell'], vox_state['col'])
                         vox_keyframe_cache[0] = chunks
                     floor_pkt = floor_latest[0]; heat_pkt = heat_latest[0]
+                    inflated_floor_pkt = inflated_floor_latest[0]
                     while not client['q'].empty():        # drop stale deltas before keyframe
                         try: client['q'].get_nowait()
                         except Exception: break
                 if chunks is None:
-                    await asyncio.sleep(0.1); continue     # no map yet — wait, stay flagged
+                    chunks = pack_vox_keyframe_chunks(np.empty((0, 3), np.int32), np.empty((0, 3), np.uint8))
                 for pkt in chunks:
                     await ws.send_bytes(pkt)
                     await asyncio.sleep(0)                 # yield: let the browser render each chunk
                 if floor_pkt is not None: await ws.send_bytes(floor_pkt)
+                if inflated_floor_pkt is not None: await ws.send_bytes(inflated_floor_pkt)
                 if heat_pkt is not None: await ws.send_bytes(heat_pkt)
                 client['resync'][0] = False
                 print(f"[heavy] resync #{resync_count} sent ({len(chunks) if chunks else 0} chunks) "
@@ -2975,81 +2036,16 @@ async def heavy_ep(ws: WebSocket):
                 heavy_clients.remove(client)
 
 
-def load_pslam_map():
-    """Load the COLMAP/slam_viz map, fit the floor -> T_nav_gl, write it for the mapping daemon,
-    and build the /map_cloud + /portals display payloads (z-up nav frame). The planner uses the
-    mapping daemon's grid2d for navigation — this map is display-only."""
-    global T_nav_gl, map_clouds, portals_json
-    # follow the daemons' mode knob (slam.reloc_mode): "off" forces mapless even with a map
-    # installed; "on"/"auto" -> map mode iff T_nav_gl.npy (from tools/make_map.py) is present.
-    try:
-        _mode = str(getattr(Config('slam'), 'reloc_mode', 'auto')).strip().lower()
-    except Exception:
-        _mode = 'auto'
-    tng = PSLAM_MAP_DIR / "T_nav_gl.npy"
-    if _mode == 'off':
-        print("[map] slam.reloc_mode=off — MAPLESS mode (live floor planning only)", flush=True)
-        return
-    if not tng.exists():
-        # MAPLESS MODE: no map installed. T_nav_gl stays identity; run mapless (live floor only).
-        # Install = run tools/make_map.py on the recon and copy its output into maps/.
-        print("[map] no T_nav_gl.npy in maps/ — MAPLESS mode (live floor planning only)", flush=True)
-        return
-    T_nav_gl = np.load(tng)                             # produced by tools/make_map.py
-    print(f"[map] T_nav_gl loaded from {tng.name}", flush=True)
-
-    # Single display cloud "map": prefer the supplied dense nav-frame cloud; else fall back to
-    # the sparse map cloud (clipped to the floor-band footprint).
-    cd = cc = None
-    dense = sorted(PSLAM_MAP_DIR.glob("*_cloud_nav.npz"))
-    if dense:
-        L = np.load(dense[0])
-        cd = L['xyz'].astype(np.float32); cc = L['rgb'].astype(np.uint8)
-        print(f"[map] display cloud '{dense[0].name}' {len(cd)} pts", flush=True)
-    if cd is not None:
-        map_clouds['map'] = struct.pack('<I', len(cd)) + cd.astype(np.float32).tobytes() + cc.astype(np.uint8).tobytes()
-
-    plist = []
-    ppath = PSLAM_MAP_DIR / "portals_colmap.json"
-    if ppath.exists():
-        for pid, v in json.load(open(ppath)).items():
-            p_nav = G.apply(T_nav_gl, (G.MW @ np.asarray(v["position"], float)).reshape(1, 3))[0]
-            plist.append({"id": pid, "pos": [float(p_nav[0]), float(p_nav[1]), float(p_nav[2])],
-                          "size": float(v["size"])})
-    portals_json = json.dumps(plist).encode()
-    print(f"[map] portals: {len(plist)}  cloud pts: {len(cd)}", flush=True)
-
-
 def main():
     global robot_mesh_bytes, depth_calib
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
-    try:
-        depth_calib = compute_depth_calib()
-        print(f"[depth] calib ready: fx={depth_calib['fx']:.1f} fy={depth_calib['fy']:.1f} "
-              f"cx={depth_calib['cx']:.1f} cy={depth_calib['cy']:.1f}", flush=True)
-    except Exception as e:
-        print(f"[depth] calib unavailable ({e}) — depth toggle will show nothing", flush=True)
+    depth_calib = compute_depth_calib()
+    print(f"[depth] calib ready: fx={depth_calib['fx']:.1f} fy={depth_calib['fy']:.1f} "
+          f"cx={depth_calib['cx']:.1f} cy={depth_calib['cy']:.1f}", flush=True)
 
-    load_pslam_map()
-
-    global auki_maps, plan_order
-    for p in sorted(AUKI_GRID_DIR.glob("auki_nav_grid_*.npz"))[:1]:   # one map per robot
-        name = p.stem.replace("auki_nav_grid_", "")
-        a = np.load(p)
-        auki_maps[name] = (np.ascontiguousarray(a['grid'], np.uint8), a['origin'].astype(np.float32))
-        g = auki_maps[name][0]
-        print(f"[map] auki '{name}' {g.shape[0]}x{g.shape[0]} free={(g==1).sum()} obs={(g==2).sum()}", flush=True)
-    plan_order = ["floor"]                      # path mode fuses the auki grid on top
-    global frontier_active
-    frontier_active = bool(auki_maps)           # mapless -> live floor only
-    print(f"[map] plan sources: {plan_order} path_mode={'ON' if frontier_active else 'MAPLESS'}", flush=True)
-
-    global cloud_names, cloud_source
-    cloud_names = list(map_clouds)
-    cloud_source = cloud_names[0] if cloud_names else "off"
-    print(f"[map] clouds: {cloud_names}", flush=True)
+    load_params_file()
 
     mesh_path = Path.home() / "bb-models/bb1/robot_mesh.npz"
     if mesh_path.exists():
@@ -3058,7 +2054,6 @@ def main():
         robot_mesh_bytes = struct.pack('<II', len(mv), len(mf)) + mv.tobytes() + mf.tobytes()
 
     print("[+] JIT warmup...", flush=True)
-    _warmup_jit()
     _k = np.zeros(2, dtype=np.int64); _c = np.zeros((2, 3), dtype=np.uint8)
     _vox_merge_diff(_k, _c, _k, _c, VOX_COLOR_EPS)   # compile ahead of the first real voxel frame
     print("[+] JIT ready", flush=True)
@@ -3072,8 +2067,9 @@ def main():
     from bbos.time import TimeLog
     TimeLog._ensure_registry()
 
-    threading.Thread(target=control_loop, daemon=True).start()
-    threading.Thread(target=planner_loop, daemon=True).start()
+    client = threading.Thread(target=nav_client_loop, daemon=True)
+    client.start()
+    threading.Thread(target=map_view_loop, daemon=True).start()
     threading.Thread(target=voxel_loop, daemon=True).start()
     threading.Thread(target=rebuild_loop, daemon=True).start()
     threading.Thread(target=depth_loop, daemon=True).start()
@@ -3092,8 +2088,12 @@ def main():
     # keyframe on a saturated link -> reconnect -> keyframe re-blast -> permanent churn loop
     # (diagnosed live: /ws churned with it, waypoint clicks died). 30s pong grace fixes the
     # churn; a truly dead peer now lingers ~40s as harmless no-op writes before cleanup.
-    uvicorn.run(app, host="0.0.0.0", port=8010, log_level="warning", ws_per_message_deflate=False,
-                ws_ping_interval=10.0, ws_ping_timeout=30.0)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8010, log_level="warning", ws_per_message_deflate=False,
+                    ws_ping_interval=10.0, ws_ping_timeout=30.0)
+    finally:
+        stopping.set()
+        client.join()
 
 
 if __name__ == "__main__":
