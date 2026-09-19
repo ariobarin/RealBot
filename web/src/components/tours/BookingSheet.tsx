@@ -76,7 +76,8 @@ function SheetBody({ tour, onClose }: { tour: OpenTour; onClose: () => void }) {
         roomId: tour.roomId,
         name: tour.name,
         neighbourhood: tour.neighbourhood,
-        plan: tour.plan,
+        mapId: tour.mapId,
+        robot: tour.robot,
         at: localIso(day, slot),
         guestName: guestName.trim(),
         email: email.trim(),
@@ -156,7 +157,7 @@ function SheetBody({ tour, onClose }: { tour: OpenTour; onClose: () => void }) {
             <div className="flex flex-1 flex-col gap-6 overflow-y-auto px-7 py-6">
               <div className="flex items-center gap-3.5">
                 <div className="h-[72px] w-24 shrink-0 overflow-hidden rounded-xl bg-bg-soft">
-                  <PlanThumb variant={tour.plan} live={false} />
+                  <PlanThumb mapId={tour.mapId} name={tour.name} robot={tour.robot} live={false} />
                 </div>
                 <div>
                   <p className="text-[17px] font-bold">
