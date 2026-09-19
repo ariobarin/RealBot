@@ -12,6 +12,12 @@ simulated: the application is not connected to a physical robot or BracketBot Cl
 Non-authoritative notes about the current prototype, the immediate hackathon relay, and a
 possible later remote camera/control architecture are in
 [`../docs/REMOTE_CONTROL_DIRECTION.md`](../docs/REMOTE_CONTROL_DIRECTION.md).
+The observed robot-side SLAM topics, binary map packets, degraded states, and
+live-telemetry integration requirements are documented in
+[`../docs/SLAM_TELEMETRY.md`](../docs/SLAM_TELEMETRY.md).
+The realtor-only post-scan workflow for following, pointing, spoken labeling,
+narrated testing, and verified interactable overlays is specified in
+[`../docs/INTERACTABLES_SETUP_PLAN.md`](../docs/INTERACTABLES_SETUP_PLAN.md).
 
 ## Run
 
