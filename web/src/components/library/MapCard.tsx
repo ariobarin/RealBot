@@ -22,12 +22,8 @@ export function MapCard({ map }: { map: MapSummary }) {
         data-testid="map-card"
         className="group block rounded-2xl text-ink no-underline outline-offset-4"
       >
-        <motion.div
-          whileHover={{ y: -2 }}
-          transition={{ duration: 0.25, ease: [0.2, 0.8, 0.2, 1] }}
-          className="rounded-2xl"
-        >
-          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-bg-soft shadow-sm transition-shadow duration-250 group-hover:shadow-md">
+        <div className="rounded-2xl">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-bg-soft transition-colors duration-150 group-hover:bg-bg-hover">
             <img
               src={map.thumb}
               alt={`SLAM floor plan of ${map.name}`}
@@ -47,7 +43,7 @@ export function MapCard({ map }: { map: MapSummary }) {
               ~{map.areaM2} m² · {map.rooms} rooms · scanned {fmtDate(map.scannedAt)}
             </p>
           </div>
-        </motion.div>
+        </div>
       </Link>
     </motion.li>
   )

@@ -4,6 +4,7 @@
 @theme {
   --color-bg: var(--bg);
   --color-bg-soft: var(--bg-soft);
+  --color-bg-hover: var(--bg-hover);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);

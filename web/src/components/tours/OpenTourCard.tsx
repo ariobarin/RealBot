@@ -26,8 +26,8 @@ export function OpenTourCard({ tour, onJoin }: { tour: OpenTour; onJoin: (tour: 
         data-testid="open-tour"
         className="group block w-full rounded-2xl border-0 bg-transparent p-0 text-left text-ink outline-offset-4"
       >
-        <motion.div whileHover={{ y: -3 }} transition={{ duration: 0.25, ease: [0.2, 0.8, 0.2, 1] }}>
-          <div className="relative aspect-[280/196] overflow-hidden rounded-2xl bg-bg-soft shadow-sm transition-shadow duration-250 group-hover:shadow-md">
+        <div>
+          <div className="relative aspect-[280/196] overflow-hidden rounded-2xl bg-bg-soft ring-0 ring-ink/0 transition-[box-shadow] duration-150 group-hover:ring-2 group-hover:ring-ink/10">
             <PlanThumb variant={tour.plan} live={tour.live} />
             <div className="absolute left-3 top-3">
               {tour.live ? (
@@ -50,7 +50,7 @@ export function OpenTourCard({ tour, onJoin }: { tour: OpenTour; onJoin: (tour: 
               {tour.live ? 'Join the tour →' : 'Reserve a slot →'}
             </p>
           </div>
-        </motion.div>
+        </div>
       </button>
     </motion.li>
   )

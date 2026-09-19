@@ -50,7 +50,8 @@ scan". No exclamation marks. Sentence case everywhere.
 
 - Radii: `8 / 12 / 16 / 24 / pill`. Cards and thumbnails are `rounded-2xl` (16). Buttons are pills.
 - Spacing scale is Tailwind's 4 px grid. Card grids: `gap-x-6 gap-y-10`. Page gutters `px-6 sm:px-10`.
-- Shadows: `sm` at rest, `md` on hover, `lg` for floating panels. Never a border _and_ a shadow.
+- Shadows: `sm` at rest, `lg` for floating panels. Cards do not move or grow on hover — the
+  thumbnail well darkens one step (`bg-soft` → `bg-hover`), nothing else.
 - Grids use `repeat(auto-fill, minmax(260px, 1fr))` so any item count lays out well.
 
 ## 4. Motion
@@ -62,7 +63,8 @@ Principles
    hover/tap/morph; `cubic-bezier(.2,.8,.2,1)` 250 ms for fades and rises.
 3. **Shared layout over crossfade.** If A _becomes_ B (card → page, orb → button), use a Framer
    `layoutId` so the eye follows it.
-4. **Small distances.** Entrances rise ≤ 16 px. Hover lifts ≤ 2 px and scales ≤ 1.03.
+4. **Small distances.** Entrances rise ≤ 16 px. Buttons may scale ≤ 1.03 on hover; cards and
+   thumbnails never move — they change colour.
 5. **Stagger, but cap it.** Lists stagger children ≤ 60 ms each, and the total spread never
    exceeds ~600 ms regardless of count (`staggerList()` in `lib/motion.ts`).
 6. **Respect `prefers-reduced-motion`.** Global CSS clamps durations to 1 ms; Framer springs
@@ -78,7 +80,7 @@ Catalogue of shared pieces
 | ---------------------- | -------------------------------------------------------------------------- |
 | Page enter / exit      | fade + 8 px rise in 300 ms; exit fade + 8 px up in 180 ms (`pageVariants`) |
 | Card grid              | staggered `fadeUp`                                                         |
-| Card hover             | lift 2 px, shadow sm→md, thumbnail scale 1.03 over 300 ms                  |
+| Card hover             | thumbnail well darkens one step in 150 ms; nothing moves                   |
 | Add card hover         | `+` rotates 90° with spring, dashed border → brand, fill → brand-soft      |
 | Button                 | hover scale 1.02, tap 0.97, spring                                         |
 | Skeleton               | 1.6 s shimmer                                                              |
