@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('library shows the preset SLAM map and an inert add card', async ({ page }) => {
+test('library shows the preset SLAM map and an add card', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Your spaces' })).toBeVisible()
 
@@ -10,20 +10,19 @@ test('library shows the preset SLAM map and an inert add card', async ({ page })
   await expect(cards.nth(1)).toContainText('TurtleBot3 Sandbox')
   await expect(cards.first().getByRole('img')).toHaveAttribute('alt', /SLAM floor plan/)
 
-  await page.getByTestId('add-card').click()
-  await expect(page).toHaveURL('/')
+  await expect(page.getByTestId('add-card')).toHaveAttribute('href', '/onboard')
 })
 
-test('map card navigates to the map placeholder', async ({ page }) => {
+test('map card navigates to the map view', async ({ page }) => {
   await page.goto('/')
   await page.getByTestId('map-card').first().click()
   await expect(page).toHaveURL('/map/small-house')
-  await expect(page.getByRole('heading', { name: 'Map view' })).toBeVisible()
-  await page.getByRole('link', { name: /Back to your spaces/ }).click()
+  await expect(page.getByRole('heading', { name: 'Small House' })).toBeVisible()
+  await page.getByRole('link', { name: /Your spaces/ }).click()
   await expect(page).toHaveURL('/')
 })
 
-test('onboard placeholder is reachable by URL', async ({ page }) => {
+test('onboarding is reachable by URL', async ({ page }) => {
   await page.goto('/onboard')
-  await expect(page.getByRole('heading', { name: 'Onboarding & pairing' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /Scan a space/ })).toBeVisible()
 })

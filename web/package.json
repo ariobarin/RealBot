@@ -15,11 +15,14 @@
     "convert-map": "tsx scripts/convert-map.ts"
   },
   "dependencies": {
+    "@react-three/drei": "10.7.8",
+    "@react-three/fiber": "9.7.0",
     "framer-motion": "^13.4.0",
     "lucide-react": "^1.47.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-router-dom": "^7.18.4",
+    "three": "0.185.0",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -31,6 +34,7 @@
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
+    "@types/three": "0.185.0",
     "@vitejs/plugin-react": "^6.1.1",
     "js-yaml": "^5.4.2",
     "jsdom": "^29.1.1",
