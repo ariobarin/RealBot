@@ -50,16 +50,17 @@ export function TopNav() {
       </nav>
 
       <div className="flex items-center gap-3">
-        {session?.role !== 'realtor' && (
+        {session ? (
+          <AccountMenu />
+        ) : (
           <Link
             to="/signin"
-            className="icon-hover hidden items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft md:flex"
+            className="icon-hover flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft"
           >
             <KeyRingIcon size={36} />
-            Realtor sign in
+            <span className="hidden sm:inline">Realtor sign in</span>
           </Link>
         )}
-        <AccountMenu />
       </div>
     </header>
   )
