@@ -106,14 +106,14 @@ The personality lives in the icons (`src/components/icons/`), the way Airbnb's n
 page is still, the icons are alive. Every hero icon is a small object on a 96-unit grid with a
 front face and a darker side face, one light source top-left, a contact shadow underneath, and
 exactly one `--brand` part. Each has a **quiet idle loop** (≤ 3 px of travel) and **one bigger
-move on hover**, triggered by an `.icon-hover` ancestor:
+move on hover**, triggered by an `.icon-hover` ancestor — always eased, never a bounce or a lift:
 
 | Icon          | Idle                        | Hover                            | Where                          |
 | ------------- | --------------------------- | -------------------------------- | ------------------------------ |
 | `HouseIcon`   | tree sways                  | door swings open, chimney smokes | Manage spaces tab, empty state |
-| `MapPinIcon`  | pin hovers, route flows     | pin jumps, lands with a squash   | Tours tab                      |
-| `RobotIcon`   | lens blinks, antenna pulses | wheels spin, body leans forward  | Go live, pairing, status       |
-| `KeyRingIcon` | hangs and swings            | big swing, tag jingles           | Realtor sign in                |
+| `MapPinIcon`  | pin hovers, route flows     | small hop                        | Tours tab                      |
+| `RobotIcon`   | lens blinks, antenna pulses | wheels spin, slight lean         | Go live, pairing, status       |
+| `KeyRingIcon` | hangs and swings            | gentle swing, tag nods           | Realtor sign in                |
 
 Small UI glyphs (arrows, chevrons, close) stay lucide. The Tours hero also has the one large
 motion on that page: `WordCarousel`, a three-row picker wheel of place types (0.9 s hold, 0.32 s

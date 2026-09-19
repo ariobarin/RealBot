@@ -4,10 +4,6 @@
 .hero-icon {
   display: block;
   flex-shrink: 0;
-  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.icon-hover:hover .hero-icon {
-  transform: translateY(-4px);
 }
 
 /* house */
@@ -18,7 +14,7 @@
 }
 .ic-door {
   transform-origin: 41px 67px;
-  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .icon-hover:hover .ic-door {
   transform: scaleX(0.22);
@@ -39,7 +35,7 @@
   animation: ic-pinbob 3s ease-in-out infinite;
 }
 .icon-hover:hover .ic-pin {
-  animation: ic-pinjump 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: ic-pinjump 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .ic-pinshadow {
   transform-box: fill-box;
@@ -71,10 +67,10 @@
 }
 .ic-body {
   transform-origin: 48px 76px;
-  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .icon-hover:hover .ic-body {
-  transform: rotate(-7deg) translateX(3px);
+  transform: rotate(-4deg) translateX(2px);
 }
 
 /* key ring */
@@ -83,14 +79,14 @@
   animation: ic-pend 3.6s ease-in-out infinite;
 }
 .icon-hover:hover .ic-hang {
-  animation: ic-pendbig 1.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: ic-pendbig 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .ic-tag {
   transform-origin: 64px 30px;
   animation: ic-tag 3.6s ease-in-out infinite;
 }
 .icon-hover:hover .ic-tag {
-  animation: ic-tagbig 1.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: ic-tagbig 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @keyframes ic-sway {
@@ -255,20 +251,10 @@
 .ic-pop {
   transform-box: fill-box;
   transform-origin: center;
-  animation: ic-pop 2.6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .icon-hover:hover .ic-pop {
-  animation: ic-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-@keyframes ic-pop {
-  0%,
-  70%,
-  100% {
-    transform: scale(1);
-  }
-  80% {
-    transform: scale(1.25);
-  }
+  transform: rotate(90deg);
 }
 
 /* calendar */
@@ -280,10 +266,9 @@
 .ic-today {
   transform-box: fill-box;
   transform-origin: center;
-  animation: ic-today 3s ease-in-out infinite;
 }
 .icon-hover:hover .ic-today {
-  animation: ic-todaypop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: ic-todaypop 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .ic-tick {
   stroke-dasharray: 12;
@@ -292,15 +277,30 @@
   animation: ic-tickdraw 0.6s ease-out;
 }
 @keyframes ic-today {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.08); }
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
 }
 @keyframes ic-todaypop {
-  0% { transform: scale(1); }
-  40% { transform: scale(1.5) rotate(-6deg); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 @keyframes ic-tickdraw {
-  from { stroke-dashoffset: 12; }
-  to { stroke-dashoffset: 0; }
+  from {
+    stroke-dashoffset: 12;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
 }

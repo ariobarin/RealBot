@@ -11,13 +11,22 @@ import { TopNav } from '../components/ui/TopNav'
 import { pageVariants, staggerList } from '../lib/motion'
 import { OPEN_TOURS, type OpenTour } from '../lib/openTours'
 
-type Filter = 'live' | 'today' | 'week'
+type Filter = 'all' | 'today' | 'week'
 
 const filters: { id: Filter; label: string }[] = [
-  { id: 'live', label: 'Live now' },
+  { id: 'all', label: 'All' },
   { id: 'today', label: 'Today' },
   { id: 'week', label: 'This week' },
 ]
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function matches(tour: OpenTour, filter: Filter, now: number) {
+  if (filter === 'all' || tour.live) return true
+  const at = tour.nextTourAt ? new Date(tour.nextTourAt).getTime() : 0
+  if (filter === 'today') return new Date(at).toDateString() === new Date(now).toDateString()
+  return at >= now && at < now + 7 * DAY_MS
+}
 
 const inputClass =
   'mt-1.5 h-[52px] w-full rounded-xl border border-[#dddddd] bg-white px-4 text-base text-ink outline-none transition focus:border-ink focus:ring-4 focus:ring-ink/5'
@@ -27,7 +36,8 @@ export function ToursPage() {
   const { loginVisitor } = useAuth()
   const navigate = useNavigate()
   const [code, setCode] = useState(() => localStorage.getItem('realbot-room') || 'demo-bot')
-  const [filter, setFilter] = useState<Filter>('live')
+  const [filter, setFilter] = useState<Filter>('all')
+  const [now] = useState(() => Date.now())
   const [booking, setBooking] = useState<OpenTour | null>(null)
   const closeBooking = useCallback(() => setBooking(null), [])
 
@@ -47,7 +57,7 @@ export function ToursPage() {
     else setBooking(tour)
   }
 
-  const tours = OPEN_TOURS.filter((t) => (filter === 'live' ? t.live : true))
+  const tours = OPEN_TOURS.filter((t) => matches(t, filter, now))
 
   return (
     <motion.main variants={pageVariants} initial="initial" animate="enter" exit="exit" className="min-h-dvh">
