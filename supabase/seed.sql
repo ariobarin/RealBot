@@ -1,0 +1,5 @@
+-- Intentionally empty.
+--
+-- Realtor users are invitation-only and are created through Supabase Auth.
+-- Bootstrap organization membership with the documented server-side SQL after
+-- the invited user exists; never commit real user IDs or credentials here.

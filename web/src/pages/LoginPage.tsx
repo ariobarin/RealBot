@@ -3,19 +3,29 @@ import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Wordmark } from '../components/ui/PageShell'
-import { demoRealtorEmail } from '../auth/authContext'
 import { useAuth } from '../auth/useAuth'
 
 type LoginMode = 'visitor' | 'realtor'
 
 export function LoginPage() {
-  const { session, loginVisitor, loginRealtor } = useAuth()
+  const { session, isLoading, loginVisitor, loginRealtor, signupRealtor } = useAuth()
   const navigate = useNavigate()
   const [mode, setMode] = useState<LoginMode>('visitor')
   const [roomId, setRoomId] = useState(() => localStorage.getItem('realbot-room') || 'demo-bot')
-  const [email, setEmail] = useState(demoRealtorEmail)
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [organizationName, setOrganizationName] = useState('')
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  if (isLoading) {
+    return (
+      <main className="grid min-h-dvh place-items-center text-sm text-ink-2">Checking your session…</main>
+    )
+  }
 
   if (session?.role === 'visitor')
     return <Navigate to={`/user/${encodeURIComponent(session.roomId)}`} replace />
@@ -24,11 +34,13 @@ export function LoginPage() {
   const chooseMode = (next: LoginMode) => {
     setMode(next)
     setError('')
+    setNotice('')
   }
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
+    setNotice('')
     if (mode === 'visitor') {
       const room = roomId.trim()
       if (!room) return
@@ -36,11 +48,43 @@ export function LoginPage() {
       void navigate(`/user/${encodeURIComponent(room)}`)
       return
     }
-    if (!loginRealtor(email, password)) {
-      setError('That email or password does not match the demo realtor account.')
-      return
+    setIsSubmitting(true)
+    try {
+      if (isCreatingAccount) {
+        if (!displayName.trim() || !organizationName.trim()) return
+        if (
+          password.length < 12 ||
+          !/[a-z]/.test(password) ||
+          !/[A-Z]/.test(password) ||
+          !/[0-9]/.test(password) ||
+          !/[^A-Za-z0-9]/.test(password)
+        ) {
+          setError('Use at least 12 characters with uppercase, lowercase, a number, and a symbol.')
+          return
+        }
+        const result = await signupRealtor(displayName, organizationName, email, password)
+        if (!result.ok) {
+          setError(result.error)
+          return
+        }
+        if (result.requiresEmailConfirmation) {
+          setPassword('')
+          setNotice('Check your email to confirm the account, then return here to sign in.')
+          return
+        }
+        void navigate('/realtor')
+        return
+      }
+
+      const result = await loginRealtor(email, password)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      void navigate('/realtor')
+    } finally {
+      setIsSubmitting(false)
     }
-    void navigate('/realtor')
   }
 
   return (
@@ -105,7 +149,7 @@ export function LoginPage() {
               </button>
             </div>
 
-            <form className="mt-6" onSubmit={submit}>
+            <form className="mt-6" onSubmit={(event) => void submit(event)} aria-busy={isSubmitting}>
               {mode === 'visitor' ? (
                 <>
                   <label htmlFor="room-id" className="text-sm font-semibold">
@@ -119,10 +163,43 @@ export function LoginPage() {
                     autoComplete="off"
                     className="mt-2 w-full rounded-2xl border border-line bg-bg-soft px-4 py-3.5 text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/10"
                   />
-                  <p className="mt-2 text-xs text-ink-3">For the prototype, try “demo-bot”.</p>
+                  <p className="mt-2 text-xs text-ink-3">
+                    Open the link from your realtor—no account or signup required. For the prototype, try
+                    “demo-bot”.
+                  </p>
                 </>
               ) : (
                 <div className="space-y-4">
+                  {isCreatingAccount && (
+                    <>
+                      <div>
+                        <label htmlFor="display-name" className="text-sm font-semibold">
+                          Your name
+                        </label>
+                        <input
+                          id="display-name"
+                          value={displayName}
+                          onChange={(event) => setDisplayName(event.target.value)}
+                          autoComplete="name"
+                          maxLength={120}
+                          className="mt-2 w-full rounded-2xl border border-line bg-bg-soft px-4 py-3.5 text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/10"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="organization-name" className="text-sm font-semibold">
+                          Company or organization
+                        </label>
+                        <input
+                          id="organization-name"
+                          value={organizationName}
+                          onChange={(event) => setOrganizationName(event.target.value)}
+                          autoComplete="organization"
+                          maxLength={160}
+                          className="mt-2 w-full rounded-2xl border border-line bg-bg-soft px-4 py-3.5 text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/10"
+                        />
+                      </div>
+                    </>
+                  )}
                   <div>
                     <label htmlFor="email" className="text-sm font-semibold">
                       Email
@@ -145,12 +222,27 @@ export function LoginPage() {
                       type="password"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
-                      autoComplete="current-password"
-                      placeholder="Enter your password"
+                      autoComplete={isCreatingAccount ? 'new-password' : 'current-password'}
+                      placeholder={isCreatingAccount ? 'Create a strong password' : 'Enter your password'}
                       className="mt-2 w-full rounded-2xl border border-line bg-bg-soft px-4 py-3.5 text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/10"
                     />
                   </div>
-                  <p className="text-xs text-ink-3">Demo login: {demoRealtorEmail} / demo</p>
+                  <p className="text-xs text-ink-3">
+                    {isCreatingAccount
+                      ? 'This creates a landlord/realtor account and an organization you own.'
+                      : 'Sign in with your landlord or realtor account.'}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-brand hover:text-brand-2"
+                    onClick={() => {
+                      setIsCreatingAccount((current) => !current)
+                      setError('')
+                      setNotice('')
+                    }}
+                  >
+                    {isCreatingAccount ? 'Already have an account? Sign in' : 'Create a realtor account'}
+                  </button>
                 </div>
               )}
 
@@ -159,10 +251,22 @@ export function LoginPage() {
                   {error}
                 </p>
               )}
+              {notice && (
+                <p role="status" className="mt-4 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-800">
+                  {notice}
+                </p>
+              )}
               <Button
                 type="submit"
                 className="mt-6 w-full justify-center"
-                disabled={mode === 'visitor' ? !roomId.trim() : !email.trim() || !password}
+                disabled={
+                  isSubmitting ||
+                  (mode === 'visitor'
+                    ? !roomId.trim()
+                    : !email.trim() ||
+                      !password ||
+                      (isCreatingAccount && (!displayName.trim() || !organizationName.trim())))
+                }
               >
                 {mode === 'visitor' ? (
                   <>
@@ -170,7 +274,14 @@ export function LoginPage() {
                   </>
                 ) : (
                   <>
-                    <Building2 size={17} /> Open realtor portal
+                    <Building2 size={17} />{' '}
+                    {isSubmitting
+                      ? isCreatingAccount
+                        ? 'Creating account…'
+                        : 'Signing in…'
+                      : isCreatingAccount
+                        ? 'Create realtor account'
+                        : 'Open realtor portal'}
                   </>
                 )}
               </Button>

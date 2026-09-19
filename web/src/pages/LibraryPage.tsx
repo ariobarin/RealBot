@@ -43,7 +43,7 @@ export function LibraryPage() {
           <Button
             variant="ghost"
             onClick={() => {
-              logout()
+              void logout()
               void navigate('/')
             }}
           >

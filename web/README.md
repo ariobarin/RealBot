@@ -6,15 +6,16 @@ Zustand. Design rules are in [`docs/TASTE.md`](docs/TASTE.md).
 
 Current state: the library contains two preset SLAM maps; **Add a space** opens the `/onboard`
 flow (4 instruction steps, simulated 2 s pairing → Start); `/map/:id` renders the selected grid
-in 2D/3D and supports local mock waypoint markers. Pairing, robot state, and commands remain
-simulated: the application is not connected to a physical robot or BracketBot Cloud.
+in 2D/3D and supports local mock waypoint markers. Realtor sign-in uses Supabase Auth and requires
+an organization membership row. Visitor room entry, pairing, robot state, and commands remain
+hackathon-oriented or simulated rather than using the planned invitation/session boundary.
 
 Non-authoritative notes about the current prototype, the immediate hackathon relay, and a
 possible later remote camera/control architecture are in
 [`../docs/REMOTE_CONTROL_DIRECTION.md`](../docs/REMOTE_CONTROL_DIRECTION.md).
 The decided implementation direction for browser authentication is in
 [`../docs/REALTOR_GUEST_AUTH_PLAN.md`](../docs/REALTOR_GUEST_AUTH_PLAN.md): Supabase Auth for
-invitation-only realtor accounts and accountless, expiring guest invitations for visitors. Robot
+landlord/realtor accounts and accountless, expiring guest invitations for visitors. Robot
 authentication is outside that plan.
 The observed robot-side SLAM topics, binary map packets, degraded states, and
 live-telemetry integration requirements are documented in
@@ -24,6 +25,9 @@ narrated testing, and verified interactable overlays is specified in
 [`../docs/INTERACTABLES_SETUP_PLAN.md`](../docs/INTERACTABLES_SETUP_PLAN.md).
 
 ## Run
+
+Copy `.env.example` to `.env.local` and fill in the Supabase project URL and publishable key.
+Do not put a Supabase secret/service-role key in `web/`.
 
 ```sh
 cd web
@@ -54,19 +58,19 @@ cd relay
 uv run python simulator.py
 ```
 
-Then run `web/` and open `/`. The login portal offers two role-aware paths:
+Then run `web/` and open `/`. The login portal currently offers two paths:
 
 - **Visitor**: enter a tour access code (the relay room ID) to open `/user/:roomId`.
-- **Realtor**: use `realtor@realbot.demo` / `demo` to open `/realtor`, then enter the operator
-  dashboard with room, transport, pose, and command diagnostics.
+- **Realtor**: create or sign in to a verified Supabase account. Account creation also creates an
+  organization and owner membership before entering the operator dashboard.
 
-The credentials can be changed with `VITE_REALTOR_EMAIL` and `VITE_REALTOR_PASSWORD`. This is
-deliberately lightweight client-side access control for the hackathon prototype, not production
-authentication. Visitors are redirected away from realtor-only routes; realtor sessions can switch
-between management and the exact visitor experience.
+Supabase setup, migrations, and first-owner account creation are documented in
+[`../supabase/README.md`](../supabase/README.md). Playwright uses an explicit test-only auth mode;
+there are no configurable demo realtor credentials in production builds. Visitors are redirected
+away from realtor-only routes, while realtor sessions can switch between management and the exact
+visitor experience.
 
-Do not extend this demo credential mechanism. The planned migration replaces it with Supabase
-realtor sessions and replaces visitor-entered room IDs with realtor-created invitation links. A
+The remaining migration replaces visitor-entered room IDs with realtor-created invitation links. A
 visitor supplies a display name and, when configured, an optional contact email and separately
 shared secret/PIN; this creates only a temporary tour-scoped guest session, not an account. Browser
 WebSockets will require short-lived tickets after that session is authorized. Until the migration is

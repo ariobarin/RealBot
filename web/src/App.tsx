@@ -12,7 +12,10 @@ const MapPage = lazy(() => import('./pages/MapPage').then((m) => ({ default: m.M
 const ControlPage = lazy(() => import('./pages/ControlPage').then((m) => ({ default: m.ControlPage })))
 
 function RequireAuth({ role, children }: { role: 'realtor' | 'visitor'; children: ReactNode }) {
-  const { session } = useAuth()
+  const { session, isLoading } = useAuth()
+  if (isLoading) {
+    return <div className="grid min-h-dvh place-items-center text-sm text-ink-2">Checking your session…</div>
+  }
   if (!session) return <Navigate to="/" replace />
   if (role === 'realtor' && session.role !== 'realtor') {
     return <Navigate to={`/user/${encodeURIComponent(session.roomId)}`} replace />
