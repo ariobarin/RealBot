@@ -11,6 +11,7 @@ test('connect screen remembers a room and opens the control dashboard', async ({
   await expect(page.getByText('Waiting for camera frames')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop' })).toBeDisabled()
   await expect(page.getByRole('heading', { name: 'Command activity' })).toHaveCount(0)
+  await expect(page.getByText('SLAM telemetry')).toHaveCount(0)
 })
 
 test('realtor dashboard can enter the exact user view', async ({ page }) => {
@@ -22,6 +23,7 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
   await expect(page).toHaveURL('/realtor/control/listing-room')
   await expect(page.getByRole('heading', { name: 'listing-room' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Command activity' })).toBeVisible()
+  await expect(page.getByText('SLAM telemetry')).toBeVisible()
 
   await page.getByRole('link', { name: 'Preview as user' }).click()
   await expect(page).toHaveURL('/user/listing-room?preview=realtor')

@@ -15,8 +15,8 @@ def test_control_presence_and_forwarding() -> None:
                 command = {
                     "type": "command",
                     "commandId": "cmd-1",
-                    "action": "move_to",
-                    "payload": {"x": 1, "y": 2},
+                    "action": "move_to_view",
+                    "payload": {"u": 0.25, "v": 0.7, "coordinateSpace": "normalized_camera"},
                 }
                 browser.send_json(command)
                 assert robot.receive_json() == command
@@ -52,3 +52,23 @@ def test_video_frames_are_forwarded() -> None:
                 robot_video.send_bytes(b"jpeg-frame")
                 assert browser_video.receive_bytes() == b"jpeg-frame"
 
+
+def test_multiple_viewers_receive_robot_state() -> None:
+    rooms.clear()
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/client/shared") as realtor:
+            assert realtor.receive_json()["online"] is False
+            with client.websocket_connect("/ws/client/shared") as user:
+                assert user.receive_json()["online"] is False
+                with client.websocket_connect("/ws/robot/shared") as robot:
+                    assert realtor.receive_json() == {"type": "presence", "online": True}
+                    assert user.receive_json() == {"type": "presence", "online": True}
+                    state = {
+                        "type": "robot_state",
+                        "ready": True,
+                        "status": "ready",
+                        "pose": {"x": 0, "y": 0, "heading": 0},
+                    }
+                    robot.send_json(state)
+                    assert realtor.receive_json() == state
+                    assert user.receive_json() == state

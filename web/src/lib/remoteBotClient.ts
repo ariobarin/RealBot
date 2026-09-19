@@ -14,7 +14,7 @@ export interface CommandEnvelope {
   commandId: string
   createdAt: number
   expiresAt: number
-  action: 'move_to' | 'stop' | 'use_action'
+  action: 'move_to' | 'move_to_view' | 'stop' | 'use_action'
   payload: Record<string, unknown>
 }
 

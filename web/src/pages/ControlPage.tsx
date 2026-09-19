@@ -1,5 +1,5 @@
 import { ArrowLeft, Bot, CircleStop, Eye, Radio, Sparkles, Video } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { MapScene } from '../components/map/MapScene'
 import { Button } from '../components/ui/Button'
@@ -25,6 +25,12 @@ interface ControlPageProps {
   view: 'realtor' | 'user'
 }
 
+interface ViewTarget {
+  u: number
+  v: number
+  commandId: string
+}
+
 export function ControlPage({ view }: ControlPageProps) {
   const { roomId = 'demo-bot' } = useParams()
   const [searchParams] = useSearchParams()
@@ -35,11 +41,12 @@ export function ControlPage({ view }: ControlPageProps) {
   const [robot, setRobot] = useState<RobotState>()
   const [frameUrl, setFrameUrl] = useState<string>()
   const [commands, setCommands] = useState<CommandUpdate[]>([])
+  const [viewTarget, setViewTarget] = useState<ViewTarget>()
   const { status: gridStatus, grid, load } = useGridStore()
 
   useEffect(() => {
-    void load('small-house')
-  }, [load])
+    if (isRealtor) void load('small-house')
+  }, [isRealtor, load])
 
   useEffect(() => {
     let currentFrame: string | undefined
@@ -72,10 +79,22 @@ export function ControlPage({ view }: ControlPageProps) {
   }, [client, roomId])
 
   const online = phase === 'online'
-  const sendMove = (x: number, y: number) => {
-    if (!online) return
-    client.sendCommand('move_to', { x: +x.toFixed(3), y: +y.toFixed(3) })
+  const sendViewTarget = (event: MouseEvent<HTMLImageElement>) => {
+    if (!online || !frameUrl) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const u = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
+    const v = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1)
+    const commandId = client.sendCommand('move_to_view', {
+      u: +u.toFixed(4),
+      v: +v.toFixed(4),
+      coordinateSpace: 'normalized_camera',
+    })
+    setViewTarget({ u, v, commandId })
   }
+
+  const targetCommand = viewTarget
+    ? commands.find((command) => command.commandId === viewTarget.commandId)
+    : undefined
 
   return (
     <PageShell wide>
@@ -154,7 +173,9 @@ export function ControlPage({ view }: ControlPageProps) {
         </div>
       </section>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+      <div
+        className={`mt-6 grid gap-6 ${isRealtor ? 'xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]' : ''}`}
+      >
         <section className="overflow-hidden rounded-3xl border border-line bg-[#20242b] shadow-md">
           <div className="flex items-center justify-between px-5 py-4 text-white">
             <div className="flex items-center gap-2 font-semibold">
@@ -162,14 +183,32 @@ export function ControlPage({ view }: ControlPageProps) {
             </div>
             {isRealtor && <span className="text-xs text-white/60">JPEG relay</span>}
           </div>
-          <div className="grid aspect-video place-items-center bg-[#171a1f]">
+          <div className="relative grid aspect-video place-items-center overflow-hidden bg-[#171a1f]">
             {frameUrl ? (
-              <img src={frameUrl} alt="Live camera from bracketbot" className="size-full object-cover" />
+              <img
+                src={frameUrl}
+                alt="Live camera from bracketbot"
+                className={`size-full object-cover ${online ? 'cursor-crosshair' : 'cursor-not-allowed'}`}
+                onClick={sendViewTarget}
+              />
             ) : (
               <div className="text-center text-white/60">
                 <Radio className="mx-auto mb-3" />
                 <p className="text-sm">Waiting for camera frames</p>
               </div>
+            )}
+            {frameUrl && (
+              <div className="pointer-events-none absolute left-4 top-4 rounded-2xl bg-black/55 px-4 py-3 text-white backdrop-blur">
+                <p className="text-sm font-semibold">Click where you want to go</p>
+                <p className="mt-0.5 text-xs text-white/70">The robot will navigate toward that point.</p>
+              </div>
+            )}
+            {viewTarget && (
+              <div
+                className={`pointer-events-none absolute size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 shadow-lg ${targetCommand?.status === 'succeeded' ? 'border-green-400 bg-green-400/30' : 'animate-pulse border-white bg-brand/50'}`}
+                style={{ left: `${viewTarget.u * 100}%`, top: `${viewTarget.v * 100}%` }}
+                aria-hidden="true"
+              />
             )}
           </div>
           <div className="flex items-center gap-3 px-5 py-4 text-sm text-white/80">
@@ -183,17 +222,19 @@ export function ControlPage({ view }: ControlPageProps) {
           </div>
         </section>
 
-        <section className="relative min-h-[420px] overflow-hidden rounded-3xl border border-line bg-bg-soft shadow-md">
-          {gridStatus === 'ready' && grid ? (
-            <MapScene grid={grid} onMoveTo={sendMove} robotPose={robot?.pose} />
-          ) : (
-            <div className="skeleton absolute inset-0" aria-label="Loading map" />
-          )}
-          <div className="pointer-events-none absolute left-4 top-4 rounded-2xl bg-white/85 px-4 py-3 shadow-md backdrop-blur">
-            <p className="text-sm font-semibold">Tap the floor to move</p>
-            <p className="mt-0.5 text-xs text-ink-2">Commands send only while the robot is online.</p>
-          </div>
-        </section>
+        {isRealtor && (
+          <section className="relative min-h-[420px] overflow-hidden rounded-3xl border border-line bg-bg-soft shadow-md">
+            {gridStatus === 'ready' && grid ? (
+              <MapScene grid={grid} robotPose={robot?.pose} />
+            ) : (
+              <div className="skeleton absolute inset-0" aria-label="Loading map" />
+            )}
+            <div className="pointer-events-none absolute left-4 top-4 rounded-2xl bg-white/85 px-4 py-3 shadow-md backdrop-blur">
+              <p className="text-sm font-semibold">SLAM telemetry</p>
+              <p className="mt-0.5 text-xs text-ink-2">Movement targets are selected in the camera feed.</p>
+            </div>
+          </section>
+        )}
       </div>
 
       {isRealtor ? (
@@ -206,7 +247,7 @@ export function ControlPage({ view }: ControlPageProps) {
               {commands.map((command) => (
                 <li key={command.commandId} className="flex items-center gap-3 py-3 text-sm">
                   <span className="font-mono text-xs text-ink-3">{command.commandId.slice(0, 8)}</span>
-                  <span className="font-semibold">{command.action?.replace('_', ' ')}</span>
+                  <span className="font-semibold">{command.action?.replaceAll('_', ' ')}</span>
                   <span className="ml-auto text-ink-2">
                     {command.status}
                     {command.attempt && command.attempt > 1 ? ` · attempt ${command.attempt}` : ''}
@@ -219,8 +260,8 @@ export function ControlPage({ view }: ControlPageProps) {
       ) : (
         <div className="mt-6 min-h-12 text-center text-sm text-ink-2" aria-live="polite">
           {commands[0]
-            ? `${commands[0].action?.replace('_', ' ')} · ${commands[0].status}`
-            : 'Tap the map to choose where the robot should go.'}
+            ? `${commands[0].action === 'move_to_view' ? 'Move' : commands[0].action?.replaceAll('_', ' ')} · ${commands[0].status}`
+            : 'Click a place in the camera feed to move there.'}
         </div>
       )}
     </PageShell>

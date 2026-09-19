@@ -69,6 +69,15 @@ class Simulator:
         if action == "move_to":
             self.x = float(payload.get("x", self.x))
             self.y = float(payload.get("y", self.y))
+        elif action == "move_to_view":
+            # Demo-only image-to-ground approximation. The hardware adapter will
+            # replace this with depth/calibration plus navigation planning.
+            u = min(max(float(payload.get("u", 0.5)), 0.0), 1.0)
+            v = min(max(float(payload.get("v", 0.75)), 0.0), 1.0)
+            forward = 0.4 + (1.0 - v) * 2.0
+            lateral = (u - 0.5) * 1.5
+            self.x += forward
+            self.y += lateral
         elif action == "stop":
             self.status = "stopped"
         elif action == "use_action":

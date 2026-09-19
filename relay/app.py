@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -11,9 +11,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 @dataclass
 class Room:
     robot: WebSocket | None = None
-    client: WebSocket | None = None
     robot_video: WebSocket | None = None
-    client_video: WebSocket | None = None
+    clients: list[WebSocket] = field(default_factory=list)
+    client_videos: list[WebSocket] = field(default_factory=list)
     last_state: str | None = None
 
 
@@ -36,7 +36,13 @@ async def send_text(socket: WebSocket | None, message: str) -> bool:
 
 
 async def presence(room: Room, online: bool) -> None:
-    await send_text(room.client, json.dumps({"type": "presence", "online": online}))
+    await broadcast_text(room.clients, json.dumps({"type": "presence", "online": online}))
+
+
+async def broadcast_text(sockets: list[WebSocket], message: str) -> None:
+    for socket in list(sockets):
+        if not await send_text(socket, message) and socket in sockets:
+            sockets.remove(socket)
 
 
 async def replace(room: Room, slot: str, socket: WebSocket) -> None:
@@ -50,7 +56,7 @@ async def replace(room: Room, slot: str, socket: WebSocket) -> None:
 
 
 def prune(room_id: str, room: Room) -> None:
-    if not any((room.robot, room.client, room.robot_video, room.client_video)):
+    if not any((room.robot, room.clients, room.robot_video, room.client_videos)):
         rooms.pop(room_id, None)
 
 
@@ -74,7 +80,7 @@ async def robot_socket(socket: WebSocket, room_id: str) -> None:
                     room.last_state = message
             except (json.JSONDecodeError, AttributeError):
                 pass
-            await send_text(room.client, message)
+            await broadcast_text(room.clients, message)
     except WebSocketDisconnect:
         pass
     finally:
@@ -88,8 +94,8 @@ async def robot_socket(socket: WebSocket, room_id: str) -> None:
 async def client_socket(socket: WebSocket, room_id: str) -> None:
     await socket.accept()
     room = room_for(room_id)
-    await replace(room, "client", socket)
-    await presence(room, room.robot is not None)
+    room.clients.append(socket)
+    await send_text(socket, json.dumps({"type": "presence", "online": room.robot is not None}))
     if room.last_state:
         await send_text(socket, room.last_state)
     try:
@@ -114,8 +120,8 @@ async def client_socket(socket: WebSocket, room_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        if room.client is socket:
-            room.client = None
+        if socket in room.clients:
+            room.clients.remove(socket)
         prune(room_id, room)
 
 
@@ -127,13 +133,12 @@ async def robot_video_socket(socket: WebSocket, room_id: str) -> None:
     try:
         while True:
             frame = await socket.receive_bytes()
-            client = room.client_video
-            if client is not None:
+            for client in list(room.client_videos):
                 try:
                     await client.send_bytes(frame)
                 except Exception:
-                    if room.client_video is client:
-                        room.client_video = None
+                    if client in room.client_videos:
+                        room.client_videos.remove(client)
     except WebSocketDisconnect:
         pass
     finally:
@@ -146,7 +151,7 @@ async def robot_video_socket(socket: WebSocket, room_id: str) -> None:
 async def client_video_socket(socket: WebSocket, room_id: str) -> None:
     await socket.accept()
     room = room_for(room_id)
-    await replace(room, "client_video", socket)
+    room.client_videos.append(socket)
     try:
         while True:
             # Browsers do not send video data; receiving keeps disconnect detection immediate.
@@ -156,6 +161,6 @@ async def client_video_socket(socket: WebSocket, room_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        if room.client_video is socket:
-            room.client_video = None
+        if socket in room.client_videos:
+            room.client_videos.remove(socket)
         prune(room_id, room)

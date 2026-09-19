@@ -46,9 +46,10 @@ Then run `web/` and use one of the two product views:
   transport, pose, and command diagnostics.
 
 The realtor dashboard's **Preview as user** link opens the real user route rather than a
-separate mock. Both views receive the same camera frames and robot state, and send `move_to`,
-`stop`, and `use_action` commands through the same client. Set `VITE_RELAY_WS_URL` when the relay
-is not on port 8000 of the same host.
+separate mock. Both views receive the same camera frames and robot state. Clicking the live image
+sends `move_to_view` with normalized image coordinates; `stop` and `use_action` use the same
+acknowledged command channel. The SLAM map is realtor-only telemetry and is not a second steering
+surface. Set `VITE_RELAY_WS_URL` when the relay is not on port 8000 of the same host.
 
 ## Maps
 
