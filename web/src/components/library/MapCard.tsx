@@ -32,7 +32,7 @@ export function MapCard({ map }: { map: MapSummary }) {
               src={map.thumb}
               alt={`SLAM floor plan of ${map.name}`}
               loading="lazy"
-              className="size-full object-contain p-4 transition-transform duration-300 ease-out group-hover:scale-[1.03]"
+              className="size-full object-contain p-4"
             />
             <div className="absolute left-3 top-3">
               <Pill tone={s.tone}>
@@ -42,10 +42,7 @@ export function MapCard({ map }: { map: MapSummary }) {
             </div>
           </div>
           <div className="mt-3 space-y-0.5 px-0.5">
-            <div className="flex items-baseline justify-between gap-3">
-              <h3 className="truncate text-[15px] font-semibold">{map.name}</h3>
-              <span className="shrink-0 text-xs text-ink-3">SLAM · 5 cm grid</span>
-            </div>
+            <h3 className="truncate text-[15px] font-semibold">{map.name}</h3>
             <p className="text-sm text-ink-2">
               ~{map.areaM2} m² · {map.rooms} rooms · scanned {fmtDate(map.scannedAt)}
             </p>

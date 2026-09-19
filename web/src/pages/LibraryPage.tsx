@@ -1,23 +1,14 @@
 import { motion } from 'framer-motion'
-import { Eye, Plus, Radio } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Eye, Plus } from 'lucide-react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapPinIcon } from '../components/icons/MapPinIcon'
-import { RobotIcon } from '../components/icons/RobotIcon'
+import { HouseIcon } from '../components/icons/HouseIcon'
 import { LibraryGrid, LibraryGridSkeleton } from '../components/library/LibraryGrid'
 import { Button } from '../components/ui/Button'
 import { TopNav } from '../components/ui/TopNav'
-import type { MapSummary } from '../lib/manifest'
 import { fadeUp, pageVariants } from '../lib/motion'
 import { useMapsStore } from '../store/useMapsStore'
-
-type Filter = 'all' | 'ready' | 'scan'
-
-const filters: { id: Filter; label: string; match: (m: MapSummary) => boolean }[] = [
-  { id: 'all', label: 'All', match: () => true },
-  { id: 'ready', label: 'Ready to share', match: (m) => m.status === 'ready' },
-  { id: 'scan', label: 'Needs a scan', match: (m) => m.status !== 'ready' },
-]
 
 const currentRoom = () => localStorage.getItem('realbot-room') || 'demo-bot'
 
@@ -25,13 +16,11 @@ const currentRoom = () => localStorage.getItem('realbot-room') || 'demo-bot'
 export function LibraryPage() {
   const navigate = useNavigate()
   const { status, maps, error, load } = useMapsStore()
-  const [filter, setFilter] = useState<Filter>('all')
   useEffect(() => {
     void load()
   }, [load])
 
   const room = currentRoom()
-  const visible = maps.filter(filters.find((f) => f.id === filter)!.match)
 
   return (
     <motion.main variants={pageVariants} initial="initial" animate="enter" exit="exit" className="min-h-dvh">
@@ -49,38 +38,17 @@ export function LibraryPage() {
       />
 
       <div className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 sm:px-10">
-        <motion.section
+        <motion.h1
           variants={fadeUp}
           initial="hidden"
           animate="show"
-          className="flex flex-wrap items-end justify-between gap-4"
+          className="text-[32px] font-extrabold tracking-[-0.03em] sm:text-[36px]"
         >
-          <div>
-            <h1 className="text-[32px] font-extrabold tracking-[-0.03em] sm:text-[36px]">Your spaces</h1>
-            <p className="mt-1 text-ink-2">Floor plans scanned by your bracketbot, ready to share.</p>
-          </div>
-          <div className="flex gap-2" role="tablist" aria-label="Filter spaces">
-            {filters.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === f.id}
-                onClick={() => setFilter(f.id)}
-                className={`rounded-full px-3.5 py-2 text-[13px] transition ${
-                  filter === f.id
-                    ? 'bg-ink font-semibold text-white'
-                    : 'border border-[#dddddd] font-medium text-ink-2 hover:border-ink hover:text-ink'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </motion.section>
+          Your spaces
+        </motion.h1>
 
         <div className="mt-7">
-          {status === 'ready' && <LibraryGrid key={filter} maps={visible} />}
+          {status === 'ready' && <LibraryGrid maps={maps} />}
           {(status === 'idle' || status === 'loading') && <LibraryGridSkeleton />}
           {status === 'error' && (
             <div role="alert" className="rounded-2xl border border-line p-8 text-center">
@@ -100,27 +68,24 @@ export function LibraryPage() {
           )}
         </div>
 
-        <section aria-label="Your robot" className="mt-12 grid gap-6 sm:grid-cols-2">
-          <div className="icon-hover flex items-center gap-4 rounded-[20px] bg-bg-soft p-5">
-            <RobotIcon size={64} />
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-bold">bracketbot · {room}</p>
-              <p className="text-[13px] text-ink-2">Live camera, SLAM telemetry and the command log.</p>
+        <section aria-label="How it works" className="mt-14 grid gap-6 sm:grid-cols-2">
+          <div className="icon-hover flex items-start gap-4 rounded-[20px] bg-bg-soft p-5">
+            <HouseIcon size={64} />
+            <div className="min-w-0">
+              <p className="text-[15px] font-bold">Scan once, tour forever</p>
+              <p className="mt-1 text-[14px] leading-relaxed text-ink-2">
+                Set the bracketbot inside the front door and press Start. It maps the whole floor on its own;
+                the plan shows up here when it's done.
+              </p>
             </div>
-            <Button
-              variant="secondary"
-              onClick={() => void navigate(`/realtor/control/${encodeURIComponent(room)}`)}
-            >
-              <Radio size={16} /> Open robot dashboard
-            </Button>
           </div>
-          <div className="icon-hover flex items-center gap-4 rounded-[20px] bg-bg-soft p-5">
+          <div className="icon-hover flex items-start gap-4 rounded-[20px] bg-bg-soft p-5">
             <MapPinIcon size={64} />
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-bold">Tour access code</p>
-              <p className="text-[13px] text-ink-2">
-                Visitors join with <span className="font-mono font-semibold text-ink">{room}</span> on the
-                Tours page.
+            <div className="min-w-0">
+              <p className="text-[15px] font-bold">Share a space two ways</p>
+              <p className="mt-1 text-[14px] leading-relaxed text-ink-2">
+                Open a space to copy its access code for a private tour, or make it public and it appears
+                under Open tours for anyone to walk.
               </p>
             </div>
           </div>

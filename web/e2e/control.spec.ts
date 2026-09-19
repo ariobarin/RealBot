@@ -87,7 +87,8 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
   await expect(page).toHaveURL('/realtor')
 
   await page.evaluate(() => localStorage.setItem('realbot-room', 'listing-room'))
-  await page.getByRole('button', { name: 'Open robot dashboard' }).click()
+  await page.getByRole('button', { name: 'Account menu' }).click()
+  await page.getByRole('menuitem', { name: 'Open robot dashboard' }).click()
 
   await expect(page).toHaveURL('/realtor/control/listing-room')
   await expect(page.getByRole('heading', { name: 'listing-room' })).toBeVisible({ timeout: 10_000 })

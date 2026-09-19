@@ -42,6 +42,10 @@ export function AccountMenu() {
           [
             { label: 'Manage spaces', to: '/realtor', strong: true },
             { label: 'Add a space', to: '/onboard' },
+            {
+              label: 'Open robot dashboard',
+              to: `/realtor/control/${encodeURIComponent(localStorage.getItem('realbot-room') || 'demo-bot')}`,
+            },
           ],
           [{ label: 'Browse open tours', to: '/' }],
           [{ label: 'Sign out', onSelect: signOut }],
