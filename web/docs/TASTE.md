@@ -108,7 +108,10 @@ The personality lives in the icons (`src/components/icons/`), the way Airbnb's n
 page is still, the icons are alive. Every hero icon is a small object on a 96-unit grid with a
 front face and a darker side face, one light source top-left, a contact shadow underneath, and
 exactly one `--brand` part. Each has a **quiet idle loop** (≤ 3 px of travel) and **one bigger
-move on hover**, triggered by an `.icon-hover` ancestor — always eased, never a bounce or a lift:
+move on hover**, triggered by an `.icon-hover` ancestor. Two intensities: the header tabs add
+`.lively` and get the full spring — a lift, a jump, a big swing — because that's the one place
+the icons are the show; everywhere else (cards, hints, empty states) the hover is small and
+eased, never a bounce or a lift:
 
 | Icon          | Idle                        | Hover                            | Where                          |
 | ------------- | --------------------------- | -------------------------------- | ------------------------------ |

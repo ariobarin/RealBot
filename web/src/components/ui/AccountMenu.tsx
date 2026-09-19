@@ -36,6 +36,7 @@ export function AccountMenu() {
     void navigate('/')
   }
 
+  const room = localStorage.getItem('realbot-room') || 'demo-bot'
   const groups: Item[][] =
     session?.role === 'realtor'
       ? [
@@ -43,12 +44,12 @@ export function AccountMenu() {
             { label: 'Manage spaces', to: '/realtor', strong: true },
             { label: 'Your bookings', to: '/bookings' },
             { label: 'Add a space', to: '/onboard' },
-            {
-              label: 'Open robot dashboard',
-              to: `/realtor/control/${encodeURIComponent(localStorage.getItem('realbot-room') || 'demo-bot')}`,
-            },
+            { label: 'Open robot dashboard', to: `/realtor/control/${encodeURIComponent(room)}` },
           ],
-          [{ label: 'Browse open tours', to: '/' }],
+          [
+            { label: 'Browse open tours', to: '/' },
+            { label: 'Preview as user', to: `/user/${encodeURIComponent(room)}` },
+          ],
           [{ label: 'Sign out', onSelect: signOut }],
         ]
       : session?.role === 'visitor'

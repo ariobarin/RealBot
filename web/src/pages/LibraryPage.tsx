@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Eye, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapPinIcon } from '../components/icons/MapPinIcon'
@@ -10,8 +10,6 @@ import { TopNav } from '../components/ui/TopNav'
 import { fadeUp, pageVariants } from '../lib/motion'
 import { useMapsStore } from '../store/useMapsStore'
 
-const currentRoom = () => localStorage.getItem('realbot-room') || 'demo-bot'
-
 /** `/realtor` — Manage spaces → Your spaces. */
 export function LibraryPage() {
   const navigate = useNavigate()
@@ -19,8 +17,6 @@ export function LibraryPage() {
   useEffect(() => {
     void load()
   }, [load])
-
-  const room = currentRoom()
 
   return (
     <motion.main variants={pageVariants} initial="initial" animate="enter" exit="exit" className="min-h-dvh">
@@ -34,14 +30,9 @@ export function LibraryPage() {
           className="flex flex-wrap items-center justify-between gap-4"
         >
           <h1 className="text-[32px] font-extrabold tracking-[-0.03em] sm:text-[36px]">Your spaces</h1>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => void navigate(`/user/${encodeURIComponent(room)}`)}>
-              <Eye size={16} /> Preview as user
-            </Button>
-            <Button onClick={() => void navigate('/onboard')}>
-              <Plus size={16} strokeWidth={2.4} /> Add a space
-            </Button>
-          </div>
+          <Button onClick={() => void navigate('/onboard')}>
+            <Plus size={16} strokeWidth={2.4} /> Add a space
+          </Button>
         </motion.div>
 
         <div className="mt-7">

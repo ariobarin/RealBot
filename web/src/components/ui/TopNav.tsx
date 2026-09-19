@@ -30,7 +30,7 @@ export function TopNav({ actions }: { actions?: ReactNode }) {
             to={to}
             end={end}
             className={({ isActive }) =>
-              `icon-hover relative flex items-center gap-2.5 self-stretch pt-3 text-[15px] no-underline transition-colors sm:text-base ${
+              `icon-hover lively relative flex items-center gap-2.5 self-stretch pt-3 text-[15px] no-underline transition-colors sm:text-base ${
                 isActive ? 'font-semibold text-ink' : 'font-medium text-ink-2 hover:text-ink'
               }`
             }
@@ -61,7 +61,7 @@ export function TopNav({ actions }: { actions?: ReactNode }) {
         ) : (
           <Link
             to="/signin"
-            className="icon-hover flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft"
+            className="icon-hover lively flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft"
           >
             <KeyRingIcon size={36} />
             <span className="hidden sm:inline">Realtor sign in</span>

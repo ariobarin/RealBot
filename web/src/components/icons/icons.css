@@ -6,6 +6,94 @@
   flex-shrink: 0;
 }
 
+/* Header tabs only: the lively version — a lift with a spring, bigger hover moves. */
+.lively .hero-icon {
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lively:hover .hero-icon {
+  transform: translateY(-4px) scale(1.06);
+}
+.lively:hover .ic-pin {
+  animation: ic-pinjump-big 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lively:hover .ic-body {
+  transform: rotate(-7deg) translateX(3px);
+}
+.lively:hover .ic-hang {
+  animation: ic-pendbig-lively 1.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lively:hover .ic-tag {
+  animation: ic-tagbig-lively 1.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lively:hover .ic-today {
+  animation: ic-todaypop-lively 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.lively .ic-door {
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes ic-pinjump-big {
+  0% {
+    transform: translateY(0) scale(1, 1);
+  }
+  30% {
+    transform: translateY(-16px) scale(0.94, 1.08);
+  }
+  60% {
+    transform: translateY(0) scale(1.08, 0.92);
+  }
+  80% {
+    transform: translateY(-3px) scale(1, 1);
+  }
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+}
+@keyframes ic-pendbig-lively {
+  0% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(-22deg);
+  }
+  55% {
+    transform: rotate(14deg);
+  }
+  80% {
+    transform: rotate(-6deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes ic-tagbig-lively {
+  0% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(26deg);
+  }
+  55% {
+    transform: rotate(-16deg);
+  }
+  80% {
+    transform: rotate(6deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes ic-todaypop-lively {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.5) rotate(-6deg);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 /* house */
 .ic-tree {
   transform-box: fill-box;
