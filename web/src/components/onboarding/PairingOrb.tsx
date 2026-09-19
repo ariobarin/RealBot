@@ -30,19 +30,13 @@ export function PairingOrb({ phase, onStart }: PairingOrbProps) {
             exit={{ opacity: 0 }}
           >
             {[0, 1, 2].map((i) => (
-              <motion.span
+              <span
                 key={i}
-                className="absolute inset-0 rounded-full border-2 border-brand"
-                initial={{ scale: 1, opacity: 0.7 }}
-                animate={{ scale: 2.4, opacity: 0 }}
-                transition={{ duration: 1.8, delay: i * 0.6, repeat: Infinity, ease: 'easeOut' }}
+                className="orb-ring absolute inset-0 rounded-full border-2 border-brand"
+                style={{ animationDelay: `${i * 0.6}s` }}
               />
             ))}
-            <motion.span
-              className="size-3 rounded-full bg-white"
-              animate={{ scale: [1, 1.4, 1] }}
-              transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
-            />
+            <span className="orb-dot size-3 rounded-full bg-white" />
           </motion.div>
         ) : (
           <motion.button
@@ -55,10 +49,12 @@ export function PairingOrb({ phase, onStart }: PairingOrbProps) {
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-            className="inline-flex h-14 items-center gap-2 rounded-full bg-brand px-8 text-base font-semibold text-white shadow-md hover:bg-brand-2 disabled:opacity-70"
+            className="inline-flex h-14 min-w-44 items-center justify-center gap-2 rounded-full bg-brand px-8 text-base font-semibold text-white shadow-md hover:bg-brand-2 disabled:opacity-70"
           >
-            <Play size={18} fill="currentColor" />
-            {phase === 'starting' ? 'Starting scan…' : 'Start'}
+            <motion.span layout="position" className="inline-flex items-center gap-2 whitespace-nowrap">
+              <Play size={18} fill="currentColor" />
+              {phase === 'starting' ? 'Starting scan…' : 'Start'}
+            </motion.span>
           </motion.button>
         )}
       </AnimatePresence>
