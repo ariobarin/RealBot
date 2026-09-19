@@ -112,7 +112,7 @@ export function VisitorMiniMap({ grid, pose, navigation }: VisitorMiniMapProps) 
     <aside
       data-testid="visitor-minimap"
       aria-label="Robot location and planned route"
-      className="pointer-events-none absolute bottom-4 left-4 z-10 w-44 overflow-hidden rounded-2xl border border-white/20 bg-[#20242b]/90 shadow-lg backdrop-blur sm:w-56"
+      className="pointer-events-none absolute bottom-4 left-4 z-10 w-32 overflow-hidden rounded-2xl border border-white/20 bg-[#20242b]/90 shadow-lg backdrop-blur sm:w-56"
     >
       <div className="flex items-center justify-between px-3 py-2 text-white">
         <span className="text-xs font-semibold">Floor map</span>

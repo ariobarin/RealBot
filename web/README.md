@@ -61,6 +61,12 @@ also accepts an authoritative `navigation` telemetry message containing `status`
 and optional `mapId` / `mapRevision`. All coordinates are map-frame metres. The frontend only
 renders this data—it does not resolve camera clicks or calculate navigation paths.
 
+Visitor controls also include a Free Cam mode for the left-hand camera. The frontend sends
+`free_cam_start`, bounded absolute `free_cam_pose` targets, and `free_cam_stop`. Entering the mode
+must be implemented atomically by the edge: stop and lock the mobile base, acquire the left arm,
+and switch the outgoing video source to `camera.left.jpeg`. The browser never
+publishes raw joint commands.
+
 ## Maps
 
 Every layout is a SLAM occupancy grid using the robot's `mapping.grid2d` encoding

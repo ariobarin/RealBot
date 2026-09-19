@@ -30,7 +30,8 @@ export interface CommandEnvelope {
   commandId: string
   createdAt: number
   expiresAt: number
-  action: 'move_to' | 'move_to_view' | 'stop' | 'use_action'
+  action:
+    'move_to' | 'move_to_view' | 'stop' | 'use_action' | 'free_cam_start' | 'free_cam_pose' | 'free_cam_stop'
   payload: Record<string, unknown>
 }
 
