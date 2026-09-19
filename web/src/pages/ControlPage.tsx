@@ -2,12 +2,14 @@ import { ArrowLeft, Bot, CircleStop, Eye, LogOut, Radio, Sparkles, Video } from 
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { MapScene } from '../components/map/MapScene'
+import { VisitorMiniMap } from '../components/control/VisitorMiniMap'
 import { Button } from '../components/ui/Button'
 import { PageShell, Wordmark } from '../components/ui/PageShell'
 import {
   RemoteBotClient,
   type CommandUpdate,
   type ConnectionPhase,
+  type NavigationTelemetry,
   type RobotState,
 } from '../lib/remoteBotClient'
 import { useGridStore } from '../store/useGridStore'
@@ -43,18 +45,22 @@ export function ControlPage({ view }: ControlPageProps) {
   const [robot, setRobot] = useState<RobotState>()
   const [frameUrl, setFrameUrl] = useState<string>()
   const [commands, setCommands] = useState<CommandUpdate[]>([])
+  const [navigation, setNavigation] = useState<NavigationTelemetry>()
   const [viewTarget, setViewTarget] = useState<ViewTarget>()
   const { status: gridStatus, grid, load } = useGridStore()
 
+  const mapId = navigation?.mapId || robot?.mapId || 'small-house'
+
   useEffect(() => {
-    if (isRealtor) void load('small-house')
-  }, [isRealtor, load])
+    void load(mapId)
+  }, [load, mapId])
 
   useEffect(() => {
     let currentFrame: string | undefined
     const unsubscribe = client.subscribe((event) => {
       if (event.type === 'connection') setPhase(event.phase)
       if (event.type === 'state') setRobot(event.state)
+      if (event.type === 'navigation') setNavigation(event.navigation)
       if (event.type === 'video') {
         const next = URL.createObjectURL(event.frame)
         if (currentFrame) URL.revokeObjectURL(currentFrame)
@@ -227,6 +233,13 @@ export function ControlPage({ view }: ControlPageProps) {
                 className={`pointer-events-none absolute size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 shadow-lg ${targetCommand?.status === 'succeeded' ? 'border-green-400 bg-green-400/30' : 'animate-pulse border-white bg-brand/50'}`}
                 style={{ left: `${viewTarget.u * 100}%`, top: `${viewTarget.v * 100}%` }}
                 aria-hidden="true"
+              />
+            )}
+            {!isRealtor && (
+              <VisitorMiniMap
+                grid={gridStatus === 'ready' && grid?.id === mapId ? grid : undefined}
+                pose={robot?.pose}
+                navigation={navigation}
               />
             )}
           </div>

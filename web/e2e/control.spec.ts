@@ -12,6 +12,8 @@ test('visitor portal opens a tour and keeps realtor pages inaccessible', async (
   await expect(page.getByRole('button', { name: 'Stop' })).toBeDisabled()
   await expect(page.getByRole('heading', { name: 'Command activity' })).toHaveCount(0)
   await expect(page.getByText('SLAM telemetry')).toHaveCount(0)
+  await expect(page.getByTestId('visitor-minimap')).toBeVisible()
+  await expect(page.getByLabel('Robot location and planned route')).toContainText('Floor map')
   const [pageHeight, viewportHeight] = await page.evaluate(() => [
     document.documentElement.scrollHeight,
     window.innerHeight,
@@ -44,6 +46,7 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Control your bracketbot' })).toBeVisible()
   await expect(page.getByText('this is the exact experience a user sees.')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Command activity' })).toHaveCount(0)
+  await expect(page.getByTestId('visitor-minimap')).toBeVisible()
 
   await page.getByRole('link', { name: 'Exit preview' }).click()
   await expect(page).toHaveURL('/realtor/control/listing-room')

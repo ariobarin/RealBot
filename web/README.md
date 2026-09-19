@@ -56,6 +56,11 @@ sends `move_to_view` with normalized image coordinates; `stop` and `use_action` 
 acknowledged command channel. The SLAM map is realtor-only telemetry and is not a second steering
 surface. Set `VITE_RELAY_WS_URL` when the relay is not on port 8000 of the same host.
 
+The visitor camera includes a read-only 2D minimap. Robot pose comes from `robot_state`; the client
+also accepts an authoritative `navigation` telemetry message containing `status`, `goal`, `path`,
+and optional `mapId` / `mapRevision`. All coordinates are map-frame metres. The frontend only
+renders this data—it does not resolve camera clicks or calculate navigation paths.
+
 ## Maps
 
 Every layout is a SLAM occupancy grid using the robot's `mapping.grid2d` encoding
