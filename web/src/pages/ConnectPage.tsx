@@ -6,7 +6,11 @@ import { PageShell, Wordmark } from '../components/ui/PageShell'
 
 const savedRoom = () => localStorage.getItem('realbot-room') || 'demo-bot'
 
-export function ConnectPage() {
+interface ConnectPageProps {
+  audience?: 'realtor' | 'user'
+}
+
+export function ConnectPage({ audience = 'user' }: ConnectPageProps) {
   const [roomId, setRoomId] = useState(savedRoom)
   const navigate = useNavigate()
 
@@ -15,7 +19,8 @@ export function ConnectPage() {
     const room = roomId.trim()
     if (!room) return
     localStorage.setItem('realbot-room', room)
-    void navigate(`/control/${encodeURIComponent(room)}`)
+    const route = audience === 'realtor' ? '/realtor/control' : '/user'
+    void navigate(`${route}/${encodeURIComponent(room)}`)
   }
 
   return (
@@ -23,7 +28,7 @@ export function ConnectPage() {
       <header className="flex items-center justify-between">
         <Wordmark />
         <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-ink-2 no-underline">
-          <ArrowLeft size={16} /> Your spaces
+          <ArrowLeft size={16} /> {audience === 'realtor' ? 'Realtor dashboard' : 'Realtor site'}
         </Link>
       </header>
 
@@ -31,9 +36,15 @@ export function ConnectPage() {
         <div className="grid size-12 place-items-center rounded-2xl bg-brand-soft text-brand">
           <Radio size={24} />
         </div>
-        <h1 className="mt-6 text-3xl font-bold tracking-tight">Connect to your bracketbot</h1>
+        <p className="mt-6 text-xs font-semibold uppercase tracking-widest text-brand">
+          {audience === 'realtor' ? 'Realtor access' : 'Guest access'}
+        </p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight">Connect to your bracketbot</h1>
         <p className="mt-2 text-ink-2">
-          Join the same demo room as the robot relay. This hackathon connection does not use an account.
+          {audience === 'realtor'
+            ? 'Open the operator dashboard for a robot room.'
+            : 'Enter the room shared by your realtor to start exploring remotely.'}{' '}
+          This hackathon connection does not use an account.
         </p>
 
         <form className="mt-8" onSubmit={submit}>

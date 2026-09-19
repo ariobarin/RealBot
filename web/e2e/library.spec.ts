@@ -11,6 +11,8 @@ test('library shows the preset SLAM map and an add card', async ({ page }) => {
   await expect(cards.first().getByRole('img')).toHaveAttribute('alt', /SLAM floor plan/)
 
   await expect(page.getByTestId('add-card')).toHaveAttribute('href', '/onboard')
+  await expect(page.getByRole('button', { name: 'Preview user view' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open robot dashboard' })).toBeVisible()
 })
 
 test('map card navigates to the map view', async ({ page }) => {

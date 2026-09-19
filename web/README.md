@@ -39,10 +39,16 @@ cd relay
 uv run python simulator.py
 ```
 
-Then run `web/`, open `/connect`, and join room `demo-bot`. The control dashboard receives
-simulated robot state and JPEG camera frames and exercises acknowledged `move_to`, `stop`, and
-`use_action` commands. Set `VITE_RELAY_WS_URL` when the relay is not on port 8000 of the same
-host.
+Then run `web/` and use one of the two product views:
+
+- `/connect` → `/user/:roomId` is the uncluttered end-user remote-tour experience.
+- `/realtor/connect` → `/realtor/control/:roomId` is the operator dashboard with room,
+  transport, pose, and command diagnostics.
+
+The realtor dashboard's **Preview as user** link opens the real user route rather than a
+separate mock. Both views receive the same camera frames and robot state, and send `move_to`,
+`stop`, and `use_action` commands through the same client. Set `VITE_RELAY_WS_URL` when the relay
+is not on port 8000 of the same host.
 
 ## Maps
 

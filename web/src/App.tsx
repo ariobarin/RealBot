@@ -17,12 +17,29 @@ export default function App() {
       <Routes location={location} key={location.pathname}>
         <Route path="/" element={<LibraryPage />} />
         <Route path="/onboard" element={<OnboardingPage />} />
-        <Route path="/connect" element={<ConnectPage />} />
+        <Route path="/connect" element={<ConnectPage audience="user" />} />
+        <Route path="/realtor/connect" element={<ConnectPage audience="realtor" />} />
         <Route
           path="/control/:roomId"
           element={
             <Suspense fallback={null}>
-              <ControlPage />
+              <ControlPage view="user" />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/user/:roomId"
+          element={
+            <Suspense fallback={null}>
+              <ControlPage view="user" />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/realtor/control/:roomId"
+          element={
+            <Suspense fallback={null}>
+              <ControlPage view="realtor" />
             </Suspense>
           }
         />

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Radio } from 'lucide-react'
+import { Eye, Radio } from 'lucide-react'
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LibraryGrid, LibraryGridSkeleton } from '../components/library/LibraryGrid'
@@ -15,16 +15,27 @@ export function LibraryPage() {
     void load()
   }, [load])
 
+  const previewUser = () => {
+    const room = localStorage.getItem('realbot-room') || 'demo-bot'
+    void navigate(`/user/${encodeURIComponent(room)}?preview=realtor`)
+  }
+
   return (
     <PageShell wide>
       <header className="flex items-center justify-between">
         <Wordmark />
-        <Button variant="secondary" onClick={() => void navigate('/connect')}>
-          <Radio size={16} /> Connect to bot
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={previewUser}>
+            <Eye size={16} /> Preview user view
+          </Button>
+          <Button variant="secondary" onClick={() => void navigate('/realtor/connect')}>
+            <Radio size={16} /> Open robot dashboard
+          </Button>
+        </div>
       </header>
 
       <motion.section variants={fadeUp} initial="hidden" animate="show" className="mt-12 mb-8">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-brand">Realtor dashboard</p>
         <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Your spaces</h1>
         <p className="mt-2 text-ink-2">Floor plans scanned by your bracketbot, ready to share.</p>
       </motion.section>
