@@ -4,8 +4,9 @@ Realtor-facing frontend for RealBot: a library of SLAM-scanned spaces, an onboar
 flow for the bracketbot, and a 3D map viewer. Vite + React + TypeScript, Tailwind, Framer Motion,
 Zustand. Design rules are in [`docs/TASTE.md`](docs/TASTE.md).
 
-Current state (Sprints 0–2): library page with the preset SLAM map and an inert **Add a space**
-card; `/onboard` and `/map/:id` are placeholders.
+Current state (Sprints 0–3): library page with the preset SLAM map; **Add a space** opens the
+`/onboard` flow (4 instruction steps, simulated 2 s pairing → Start → preset map); `/map/:id` is
+a placeholder.
 
 ## Run
 

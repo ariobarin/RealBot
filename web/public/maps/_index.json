@@ -8,5 +8,15 @@
     "rooms": 5,
     "scannedAt": "2026-09-19T00:00:00Z",
     "status": "ready"
+  },
+  {
+    "id": "tb3-sandbox",
+    "name": "TurtleBot3 Sandbox",
+    "thumb": "/maps/tb3-sandbox/thumb.png",
+    "grid": "/maps/tb3-sandbox/map.grid.json",
+    "areaM2": 20,
+    "rooms": 1,
+    "scannedAt": "2026-09-19T00:00:00Z",
+    "status": "ready"
   }
 ]
