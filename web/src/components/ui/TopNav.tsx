@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import type { ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
 import { spring } from '../../lib/motion'
@@ -14,7 +15,8 @@ const tabs = [
 ]
 
 /** The public two-tab header: Tours (everyone) and Manage spaces (realtors). */
-export function TopNav() {
+/** `actions` render to the left of the account pill on signed-in pages. */
+export function TopNav({ actions }: { actions?: ReactNode }) {
   const { session } = useAuth()
   return (
     <header className="flex h-[84px] items-center justify-between gap-6 border-b border-line px-6 sm:px-10">
@@ -51,7 +53,10 @@ export function TopNav() {
 
       <div className="flex items-center gap-3">
         {session ? (
-          <AccountMenu />
+          <>
+            {actions}
+            <AccountMenu />
+          </>
         ) : (
           <Link
             to="/signin"

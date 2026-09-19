@@ -5,9 +5,9 @@ import type { MapSummary } from '../../lib/manifest'
 import { Pill } from '../ui/Pill'
 
 const statusLabel: Record<MapSummary['status'], { text: string; tone: 'ok' | 'brand' | 'neutral' }> = {
-  ready: { text: 'Ready', tone: 'ok' },
+  ready: { text: 'Ready to share', tone: 'ok' },
   scanning: { text: 'Scanning', tone: 'brand' },
-  draft: { text: 'Draft', tone: 'neutral' },
+  draft: { text: 'Needs a scan', tone: 'neutral' },
 }
 
 const fmtDate = (iso: string) =>

@@ -250,3 +250,23 @@
     animation: none;
   }
 }
+
+/* add a space */
+.ic-pop {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ic-pop 2.6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+.icon-hover:hover .ic-pop {
+  animation: ic-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes ic-pop {
+  0%,
+  70%,
+  100% {
+    transform: scale(1);
+  }
+  80% {
+    transform: scale(1.25);
+  }
+}
