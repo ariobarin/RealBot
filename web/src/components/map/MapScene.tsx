@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, type ComponentRef, type RefObject } from 'r
 import { MathUtils, Vector3 } from 'three'
 import { botClient } from '../../lib/botClient'
 import { FLOOR, cellToWorld, getCell, type GridMap } from '../../lib/grid'
+import type { PointCloudSummary } from '../../lib/manifest'
 import { frameGrid, sceneToCell } from '../../lib/scene'
 import { useViewStore } from '../../store/useViewStore'
 import { GridFloor } from './GridFloor'
 import { GridWalls } from './GridWalls'
 import { RobotMarker } from './RobotMarker'
+import { ScanPointCloud } from './ScanPointCloud'
 import { Waypoints } from './Waypoints'
 
 const BG = '#f7f7f7'
@@ -81,10 +83,12 @@ function Scene({
   grid,
   onMoveTo,
   robotPose,
+  cloud,
 }: {
   grid: GridMap
   onMoveTo?: (x: number, y: number) => void
   robotPose?: RobotPose
+  cloud?: PointCloudSummary
 }) {
   const controls = useRef<MapControlsImpl>(null)
   const mode = useViewStore((s) => s.mode)
@@ -122,7 +126,7 @@ function Scene({
       />
 
       <GridFloor grid={grid} onPick={onPick} />
-      <GridWalls key={grid.id} grid={grid} />
+      {cloud ? <ScanPointCloud source={cloud} /> : <GridWalls key={grid.id} grid={grid} />}
       <Grid
         position={[frame.center[0], 0.002, frame.center[2]]}
         args={[frame.width, frame.depth]}
@@ -159,10 +163,12 @@ export function MapScene({
   grid,
   onMoveTo,
   robotPose,
+  cloud,
 }: {
   grid: GridMap
   onMoveTo?: (x: number, y: number) => void
   robotPose?: RobotPose
+  cloud?: PointCloudSummary
 }) {
   const frame = useMemo(() => frameGrid(grid), [grid])
   const start: [number, number, number] = [
@@ -179,7 +185,7 @@ export function MapScene({
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       data-testid="map-canvas"
     >
-      <Scene grid={grid} onMoveTo={onMoveTo} robotPose={robotPose} />
+      <Scene grid={grid} onMoveTo={onMoveTo} robotPose={robotPose} cloud={cloud} />
     </Canvas>
   )
 }

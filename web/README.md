@@ -111,5 +111,15 @@ npm run convert-map -- public/maps/<id> <id> "<Name>" "<credit>"
 which writes `map.grid.json` and a styled `thumb.png`. Register the map in
 `public/maps/_index.json`; the library grid lays out any number of entries.
 
+Bracketbot `mapping.voxels` NPZ exports can also be converted into a derived
+occupancy grid, thumbnail, and full-colour 3D point cloud:
+
+```sh
+python scripts/convert-voxel-map.py scan.npz public/maps/my-scan my-scan "My scan"
+```
+
+Add the generated `cloud.bin` and `cloud.json` paths to the map's manifest entry
+to render the original 3D scan instead of extruded occupancy-grid walls.
+
 Preset: `small-house` from
 [aws-robotics/aws-robomaker-small-house-world](https://github.com/aws-robotics/aws-robomaker-small-house-world) (MIT).
