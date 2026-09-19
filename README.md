@@ -23,3 +23,10 @@ Credentials belong in local environment variables or ignored `.env` files.
   non-authoritative working notes about the current web prototype, the immediate
   hackathon relay, and possible later remote-control architecture. It is context
   for discussion, not an API contract, safety specification, or source of truth.
+
+## Web deployment
+
+The React frontend in `web/` is configured for deployment on Vercel from the
+repository root. Import this repository in Vercel and keep the project root at
+the repository root; `vercel.json` installs and builds the frontend and routes
+client-side URLs back to `index.html`.
