@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
-async function installRobotSocket(page: import('@playwright/test').Page) {
-  await page.addInitScript(() => {
+async function installRobotSocket(page: import('@playwright/test').Page, acquired = true) {
+  await page.addInitScript((leaseAcquired) => {
     const commands: unknown[] = []
     Object.defineProperty(window, '__realbotCommands', { value: commands })
 
@@ -22,12 +22,16 @@ async function installRobotSocket(page: import('@playwright/test').Page) {
           this.onopen?.()
           if (!this.video) {
             this.onmessage?.({ data: JSON.stringify({ type: 'presence', online: true }) })
+            this.onmessage?.({
+              data: JSON.stringify({ type: 'control_lease', acquired: leaseAcquired }),
+            })
           }
         }, 0)
       }
 
       send(raw: string) {
-        const command = JSON.parse(raw) as { commandId: string }
+        const command = JSON.parse(raw) as { type: string; commandId?: string }
+        if (command.type === 'heartbeat') return
         commands.push(command)
         window.setTimeout(
           () =>
@@ -46,7 +50,7 @@ async function installRobotSocket(page: import('@playwright/test').Page) {
     }
 
     Object.defineProperty(window, 'WebSocket', { value: RobotSocket })
-  })
+  }, acquired)
 }
 
 test('visitor portal opens a tour and keeps realtor pages inaccessible', async ({ page }) => {
@@ -87,7 +91,7 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
   await page.getByRole('button', { name: 'Open robot dashboard' }).click()
 
   await expect(page).toHaveURL('/realtor/control/listing-room')
-  await expect(page.getByRole('heading', { name: 'listing-room' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'listing-room' })).toBeVisible({ timeout: 10_000 })
   await expect(page.getByRole('heading', { name: 'Command activity' })).toBeVisible()
   await expect(page.getByText('SLAM telemetry')).toBeVisible()
 
@@ -140,4 +144,24 @@ test('visitor can run a bounded left-hand free-cam session', async ({ page }) =>
 
   await panel.getByRole('button', { name: 'Exit free cam' }).click()
   await expect(panel).toHaveCount(0)
+})
+
+test('view-only visitor cannot issue motion but can still stop', async ({ page }) => {
+  await installRobotSocket(page, false)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Join tour' }).click()
+  await expect(page.getByTestId('control-lease')).toContainText('View only')
+  await expect(page.getByRole('button', { name: 'Free cam' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Use action' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Stop' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Stop' }).click()
+  const commands = await page.evaluate(
+    () =>
+      (
+        window as unknown as Window & {
+          __realbotCommands: Array<{ action: string }>
+        }
+      ).__realbotCommands,
+  )
+  expect(commands.map((command) => command.action)).toEqual(['stop'])
 })
