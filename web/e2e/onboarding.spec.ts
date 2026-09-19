@@ -20,7 +20,7 @@ test('add card opens onboarding; pairing flips to Start after ~2 s; Start opens 
 
   await page.getByTestId('start-button').click()
   await expect(page).toHaveURL('/map/small-house')
-  await expect(page.getByRole('heading', { name: 'Map view' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Small House' })).toBeVisible()
 })
 
 test('escape returns to the library and pairing restarts on re-entry', async ({ page }) => {

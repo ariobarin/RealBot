@@ -12,12 +12,12 @@ test('library shows the preset SLAM map and an add card', async ({ page }) => {
   await expect(page.getByTestId('add-card')).toHaveAttribute('href', '/onboard')
 })
 
-test('map card navigates to the map placeholder', async ({ page }) => {
+test('map card navigates to the map view', async ({ page }) => {
   await page.goto('/')
   await page.getByTestId('map-card').first().click()
   await expect(page).toHaveURL('/map/small-house')
-  await expect(page.getByRole('heading', { name: 'Map view' })).toBeVisible()
-  await page.getByRole('link', { name: /Back to your spaces/ }).click()
+  await expect(page.getByRole('heading', { name: 'Small House' })).toBeVisible()
+  await page.getByRole('link', { name: /Your spaces/ }).click()
   await expect(page).toHaveURL('/')
 })
 
