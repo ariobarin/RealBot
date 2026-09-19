@@ -132,3 +132,11 @@ for print and mono only. Never outlined, never another colour. The wordmark is F
 lower-case `realbot`, tracked −0.04em, sized 0.86× the mark. `Logo` is the lockup, `LogoMark`
 the face alone, `Wordmark` the header lockup linking home. Minimums: mark 16 px, lockup 20 px.
 Clear space is one eye-width. `public/favicon.svg` is the mark.
+
+## 7. Scenes
+
+Add a space uses four larger stages (`src/components/onboarding/Scenes.tsx`, 560×420 in
+`scenes.css`): the bot boots, rolls in through the front door onto the HOME ring, pairs over radio,
+and walks the plan with a scan cone while the walls draw in behind it. Same language as the icons
+— front and side faces, one coral part, contact shadows — and the same restraint: every loop is
+slow and eased, and they are the only large motion on that page.

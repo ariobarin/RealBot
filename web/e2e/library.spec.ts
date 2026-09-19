@@ -28,5 +28,5 @@ test('map card navigates to the map view', async ({ page }) => {
 
 test('onboarding is reachable by URL', async ({ page }) => {
   await page.goto('/onboard')
-  await expect(page.getByRole('heading', { name: /Scan a space/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Add a space' })).toBeVisible()
 })

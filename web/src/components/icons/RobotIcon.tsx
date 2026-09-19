@@ -1,7 +1,7 @@
 import './icons.css'
 
-/** The bracketbot. Idle: lens blinks, antenna pulses. Hover: wheels spin, body leans forward. */
-export function RobotIcon({ size = 52 }: { size?: number }) {
+/** The drawing alone, for nesting inside a larger scene (`<svg viewBox="0 0 96 96">`). */
+export function RobotFigure() {
   const wheel = (cx: number) => (
     <g className="ic-wheel">
       <circle cx={cx} cy="76" r="10" fill="#2B2B2B" />
@@ -11,7 +11,7 @@ export function RobotIcon({ size = 52 }: { size?: number }) {
     </g>
   )
   return (
-    <svg className="hero-icon" width={size} height={size} viewBox="0 0 96 96" aria-hidden>
+    <>
       <ellipse cx="48" cy="88" rx="30" ry="4" fill="#000" opacity=".1" />
       <g className="ic-body">
         <line x1="48" y1="10" x2="48" y2="19" stroke="#444" strokeWidth="2" />
@@ -34,6 +34,15 @@ export function RobotIcon({ size = 52 }: { size?: number }) {
       </g>
       {wheel(34)}
       {wheel(62)}
+    </>
+  )
+}
+
+/** The bracketbot. Idle: lens blinks, antenna pulses. Hover: wheels spin, body leans forward. */
+export function RobotIcon({ size = 52 }: { size?: number }) {
+  return (
+    <svg className="hero-icon" width={size} height={size} viewBox="0 0 96 96" aria-hidden>
+      <RobotFigure />
     </svg>
   )
 }
