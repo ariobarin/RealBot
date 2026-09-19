@@ -7,7 +7,8 @@ export interface Booking {
   roomId: string
   name: string
   neighbourhood: string
-  plan: OpenTour['plan']
+  mapId: string
+  robot: OpenTour['robot']
   /** ISO local datetime of the slot. */
   at: string
   guestName: string

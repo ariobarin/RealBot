@@ -10,8 +10,10 @@ export interface OpenTour {
   live: boolean
   host?: string
   watching?: number
-  /** Index into the plan thumbnail variants. */
-  plan: 0 | 1 | 2 | 3
+  /** The SLAM preset behind this listing (an id in public/maps/_index.json). */
+  mapId: string
+  /** Where the robot is on the plan, as a fraction of the thumbnail's width/height. */
+  robot: [number, number]
 }
 
 export const OPEN_TOURS: OpenTour[] = [
@@ -23,7 +25,8 @@ export const OPEN_TOURS: OpenTour[] = [
     live: true,
     host: 'Dana',
     watching: 3,
-    plan: 0,
+    mapId: 'small-house',
+    robot: [0.62, 0.48],
   },
   {
     id: 'mission-loft',
@@ -31,7 +34,8 @@ export const OPEN_TOURS: OpenTour[] = [
     name: 'Loft',
     neighbourhood: 'The Mission',
     live: true,
-    plan: 1,
+    mapId: 'bookstore',
+    robot: [0.3, 0.7],
   },
   {
     id: 'alamo-victorian',
@@ -40,7 +44,8 @@ export const OPEN_TOURS: OpenTour[] = [
     neighbourhood: 'Alamo Square',
     live: false,
     nextTourAt: '2026-09-21T13:30:00',
-    plan: 2,
+    mapId: 'tb3-house',
+    robot: [0.5, 0.55],
   },
   {
     id: 'dolores-studio',
@@ -49,7 +54,8 @@ export const OPEN_TOURS: OpenTour[] = [
     neighbourhood: 'Dolores Park',
     live: false,
     nextTourAt: '2026-09-22T17:00:00',
-    plan: 3,
+    mapId: 'tb3-sandbox',
+    robot: [0.5, 0.5],
   },
 ]
 

@@ -28,7 +28,12 @@ export function OpenTourCard({ tour, onJoin }: { tour: OpenTour; onJoin: (tour: 
       >
         <div>
           <div className="relative aspect-[280/196] overflow-hidden rounded-2xl bg-bg-soft ring-0 ring-ink/0 transition-[box-shadow] duration-150 group-hover:ring-2 group-hover:ring-ink/10">
-            <PlanThumb variant={tour.plan} live={tour.live} />
+            <PlanThumb
+              mapId={tour.mapId}
+              name={`${tour.name}, ${tour.neighbourhood}`}
+              robot={tour.robot}
+              live={tour.live}
+            />
             <div className="absolute left-3 top-3">
               {tour.live ? (
                 <Pill tone="brand">
