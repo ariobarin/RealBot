@@ -20,6 +20,7 @@ test('add card opens onboarding; pairing flips to Start after ~2 s; Start opens 
 
   await page.getByTestId('start-button').click()
   await expect(page).toHaveURL('/map/small-house')
+  await expect(page.getByTestId('map-view')).toHaveAttribute('data-status', 'ready', { timeout: 10_000 })
   await expect(page.getByRole('heading', { name: 'Small House' })).toBeVisible()
 })
 

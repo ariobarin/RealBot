@@ -24,6 +24,14 @@ test('map view loads the SLAM grid with HUD, legend and view controls', async ({
   await expect(page).toHaveURL('/')
 })
 
+test('TurtleBot3 Sandbox renders through the same map view', async ({ page }) => {
+  await page.goto('/map/tb3-sandbox')
+  await expect(page.getByTestId('map-view')).toHaveAttribute('data-status', 'ready', { timeout: 10_000 })
+  await expect(page.getByRole('heading', { name: 'TurtleBot3 Sandbox' })).toBeVisible()
+  await expect(page.getByText('20 m²')).toBeVisible()
+  await expect(page.getByText('SLAM · 5 cm')).toBeVisible()
+})
+
 test('clicking the floor sends an add_wp command to the mock bot', async ({ page }) => {
   await page.goto('/map/small-house')
   await expect(page.getByTestId('map-view')).toHaveAttribute('data-status', 'ready', { timeout: 10_000 })
