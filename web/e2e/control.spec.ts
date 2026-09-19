@@ -109,10 +109,22 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
 
 test('invalid realtor credentials stay on the portal', async ({ page }) => {
   await page.goto('/signin')
+  await page.getByLabel('Email').fill('not-a-realtor@example.test')
   await page.getByLabel('Password').fill('wrong')
   await page.getByRole('button', { name: 'Open Manage spaces' }).click()
   await expect(page.getByRole('alert')).toContainText('does not match')
   await expect(page).toHaveURL('/signin')
+})
+
+test('visitor entry is accountless while realtors can create an account', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText(/no account or signup required/i)).toBeVisible()
+
+  await page.goto('/signin')
+  await page.getByRole('button', { name: 'Create a realtor account' }).click()
+  await expect(page.getByLabel('Your name')).toBeVisible()
+  await expect(page.getByLabel('Company or organization')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Create realtor account', exact: true })).toBeVisible()
 })
 
 test('visitor can run a bounded left-hand free-cam session', async ({ page }) => {

@@ -15,5 +15,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["scripts", "e2e", "src/lib"]
+  "include": ["scripts", "e2e", "src/lib/grid.ts", "src/lib/pgm.ts"]
 }

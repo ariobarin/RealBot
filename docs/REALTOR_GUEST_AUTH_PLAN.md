@@ -15,9 +15,32 @@ It replaces the earlier open question about which authentication provider to use
 - Robot authentication is outside the scope of this plan. Existing robot relay
   connections are not changed by this work.
 
-This is an implementation plan, not a claim that the current demo already has
-these protections. The current frontend and relay remain unauthenticated demo
-components until the migration below is complete.
+This is an implementation plan, not a claim that every boundary is already
+deployed. The realtor frontend integration is present but is not operational
+until the migration and hosted Auth configuration are applied. Visitor access
+and browser relay sockets remain hackathon-only paths.
+
+## Implementation status
+
+The first realtor-authentication slice is present in the repository but still
+requires the migration and hosted Auth configuration to be applied:
+
+- the Supabase CLI configuration and versioned schema migration exist under
+  `supabase/`;
+- public organization, membership, profile, and space tables have explicit
+  grants and RLS policies;
+- invitation secrets, guest sessions, and socket tickets live in an unexposed
+  `private` schema;
+- the frontend lets a landlord/realtor create an email/password account and
+  requires email confirmation;
+- new realtor signups atomically create a profile, an organization, and an
+  owner membership; subsequent sign-in still requires a membership row;
+- the old demo realtor login is available only in the explicit Playwright test
+  environment.
+
+Accountless visitor-link exchange, invitation management UI/API, guest session
+cookies, and browser socket-ticket enforcement are not implemented yet. The
+current visitor room-code flow and relay remain a hackathon-only path.
 
 ## Why Supabase
 
@@ -92,7 +115,7 @@ spaces
   name
   relay_room_id                    current relay lookup; not a credential
 
-tour_invitations
+private.tour_invitations
   id
   space_id                         -> spaces.id
   created_by                       -> auth.users.id
@@ -104,19 +127,23 @@ tour_invitations
   use_count
   revoked_at                       nullable
 
-guest_sessions
+private.guest_sessions
   id
   invitation_id                    -> tour_invitations.id
+  session_token_hash               never store the guest credential in plaintext
   display_name
   contact_email                    nullable and unverified unless OTP-verified
   expires_at
   revoked_at                       nullable
 
-socket_tickets
-  id or nonce
+private.socket_tickets
+  id
+  token_hash                       never store the socket ticket in plaintext
   principal_type                   realtor | guest
-  principal_id
+  principal_user_id                nullable; set for a realtor
+  guest_session_id                 nullable; set for a guest
   space_id
+  connection_type                  control | video
   permissions
   expires_at
   consumed_at                      nullable
@@ -132,16 +159,18 @@ Enable RLS on every browser-accessible application table. At minimum:
 
 ## Realtor flow
 
-1. An owner or administrator invites a realtor. Public self-signup is disabled.
-2. Supabase handles verified email, password storage, sign-in, password reset,
+1. A landlord or realtor creates an account and names their organization.
+2. The Auth user-creation trigger creates that user's profile, organization,
+   and `owner` membership. Visitors never use this signup path.
+3. Supabase handles verified email, password storage, sign-in, password reset,
    session refresh, and logout.
-3. After sign-in, the application loads organization membership from the
+4. After sign-in, the application loads organization membership from the
    database. A valid Supabase session without membership does not grant realtor
    access.
-4. Sensitive control-session issuance may require a recent login or an `aal2`
+5. Sensitive control-session issuance may require a recent login or an `aal2`
    MFA session. Read-only account and space views may remain available at
    `aal1`.
-5. The relay verifies the Supabase access token and current database membership
+6. The relay verifies the Supabase access token and current database membership
    before issuing a socket ticket.
 
 Email/password is the initial universal sign-in method. Google or Microsoft OIDC

@@ -32,7 +32,7 @@ export function AccountMenu() {
   }, [open])
 
   const signOut = () => {
-    logout()
+    void logout()
     void navigate('/')
   }
 

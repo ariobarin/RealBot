@@ -11,6 +11,7 @@ export default defineConfig({
   use: { baseURL, trace: 'retain-on-failure' },
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${port}`,
+    env: { VITE_AUTH_MODE: 'test' },
     url: baseURL,
     reuseExistingServer: !process.env.CI,
   },

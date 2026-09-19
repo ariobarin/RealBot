@@ -85,7 +85,8 @@ export function ToursPage() {
         >
           <h2 className="text-[22px] font-bold tracking-tight">Have an access code?</h2>
           <p className="-mt-2 text-sm leading-snug text-ink-2">
-            Your realtor sends one for private tours. For the prototype, try demo-bot.
+            Your realtor sends one for private tours — no account or signup required. For the prototype, try
+            demo-bot.
           </p>
           <label htmlFor="room-id" className="text-[13px] font-semibold">
             Access code

@@ -240,7 +240,7 @@ export function ControlPage({ view }: ControlPageProps) {
             <button
               type="button"
               onClick={() => {
-                logout()
+                void logout()
                 void navigate('/')
               }}
               className="inline-flex items-center gap-1 border-0 bg-transparent text-sm text-ink-2"
