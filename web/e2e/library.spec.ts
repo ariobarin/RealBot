@@ -5,8 +5,9 @@ test('library shows the preset SLAM map and an inert add card', async ({ page })
   await expect(page.getByRole('heading', { name: 'Your spaces' })).toBeVisible()
 
   const cards = page.getByTestId('map-card')
-  await expect(cards).toHaveCount(1)
+  await expect(cards).toHaveCount(2)
   await expect(cards.first()).toContainText('Small House')
+  await expect(cards.nth(1)).toContainText('TurtleBot3 Sandbox')
   await expect(cards.first().getByRole('img')).toHaveAttribute('alt', /SLAM floor plan/)
 
   await page.getByTestId('add-card').click()
