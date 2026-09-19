@@ -118,3 +118,12 @@ move on hover**, triggered by an `.icon-hover` ancestor:
 Small UI glyphs (arrows, chevrons, close) stay lucide. The Tours hero also has the one large
 motion on that page: `WordCarousel`, a three-row picker wheel of place types (0.9 s hold, 0.32 s
 move, six tints, a one-row window so only the live word shows at rest). Nothing else on the page should compete with it.
+
+## 6. Logo
+
+`src/components/brand/Logo.tsx`. The mark is the robot's face — rounded body, two eyes, one
+antenna — always `--brand` on white or white on `--brand` (`tone="reversed"`); `tone="ink"` is
+for print and mono only. Never outlined, never another colour. The wordmark is Figtree 800,
+lower-case `realbot`, tracked −0.04em, sized 0.86× the mark. `Logo` is the lockup, `LogoMark`
+the face alone, `Wordmark` the header lockup linking home. Minimums: mark 16 px, lockup 20 px.
+Clear space is one eye-width. `public/favicon.svg` is the mark.

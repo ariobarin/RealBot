@@ -5,7 +5,7 @@ import { spring } from '../../lib/motion'
 import { HouseIcon } from '../icons/HouseIcon'
 import { KeyRingIcon } from '../icons/KeyRingIcon'
 import { MapPinIcon } from '../icons/MapPinIcon'
-import { Wordmark } from './PageShell'
+import { Wordmark } from '../brand/Logo'
 
 const tabs = [
   { to: '/', label: 'Tours', Icon: MapPinIcon, end: true },
