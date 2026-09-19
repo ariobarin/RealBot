@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import json
+import os
 from dataclasses import dataclass, field
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -14,6 +17,8 @@ class Room:
     robot_video: WebSocket | None = None
     clients: list[WebSocket] = field(default_factory=list)
     client_videos: list[WebSocket] = field(default_factory=list)
+    client_can_control: dict[int, bool] = field(default_factory=dict)
+    controller: WebSocket | None = None
     last_state: str | None = None
 
 
@@ -23,6 +28,45 @@ rooms: dict[str, Room] = {}
 
 def room_for(room_id: str) -> Room:
     return rooms.setdefault(room_id, Room())
+
+
+def token_matches(provided: str | None, expected: str) -> bool:
+    return provided is not None and hmac.compare_digest(provided, expected)
+
+
+async def receive_auth_token(socket: WebSocket) -> str | None:
+    try:
+        raw = await asyncio.wait_for(socket.receive_text(), timeout=5.0)
+        message = json.loads(raw)
+    except (TimeoutError, json.JSONDecodeError, AttributeError):
+        return None
+    if message.get("type") != "auth" or not isinstance(message.get("token"), str):
+        return None
+    return message["token"]
+
+
+async def authenticate_robot(socket: WebSocket) -> bool:
+    expected = os.getenv("ROBOT_TOKEN")
+    if expected is None:
+        return True
+    return token_matches(await receive_auth_token(socket), expected)
+
+
+async def client_access(socket: WebSocket) -> tuple[bool, bool]:
+    control_secret = os.getenv("CONTROL_TOKEN")
+    view_secret = os.getenv("VIEW_TOKEN")
+    if control_secret is None and view_secret is None:
+        return True, True
+    provided = await receive_auth_token(socket)
+    if control_secret is not None and token_matches(provided, control_secret):
+        return True, True
+    if view_secret is not None and token_matches(provided, view_secret):
+        return True, False
+    return False, False
+
+
+async def reject_unauthorized(socket: WebSocket) -> None:
+    await socket.close(code=1008, reason="unauthorized")
 
 
 async def send_text(socket: WebSocket | None, message: str) -> bool:
@@ -37,6 +81,19 @@ async def send_text(socket: WebSocket | None, message: str) -> bool:
 
 async def presence(room: Room, online: bool) -> None:
     await broadcast_text(room.clients, json.dumps({"type": "presence", "online": online}))
+
+
+async def send_lease(socket: WebSocket, acquired: bool) -> None:
+    await send_text(socket, json.dumps({"type": "control_lease", "acquired": acquired}))
+
+
+async def announce_leases(room: Room) -> None:
+    for client in list(room.clients):
+        if not await send_text(
+            client,
+            json.dumps({"type": "control_lease", "acquired": client is room.controller}),
+        ) and client in room.clients:
+            room.clients.remove(client)
 
 
 async def broadcast_text(sockets: list[WebSocket], message: str) -> None:
@@ -68,6 +125,9 @@ async def health() -> dict[str, int | str]:
 @app.websocket("/ws/robot/{room_id}")
 async def robot_socket(socket: WebSocket, room_id: str) -> None:
     await socket.accept()
+    if not await authenticate_robot(socket):
+        await reject_unauthorized(socket)
+        return
     room = room_for(room_id)
     await replace(room, "robot", socket)
     await presence(room, True)
@@ -93,25 +153,53 @@ async def robot_socket(socket: WebSocket, room_id: str) -> None:
 @app.websocket("/ws/client/{room_id}")
 async def client_socket(socket: WebSocket, room_id: str) -> None:
     await socket.accept()
+    authorized, can_control = await client_access(socket)
+    if not authorized:
+        await reject_unauthorized(socket)
+        return
     room = room_for(room_id)
     room.clients.append(socket)
+    room.client_can_control[id(socket)] = can_control
+    if room.controller is None and can_control:
+        room.controller = socket
     await send_text(socket, json.dumps({"type": "presence", "online": room.robot is not None}))
+    await send_lease(socket, socket is room.controller)
     if room.last_state:
         await send_text(socket, room.last_state)
     try:
         while True:
             message = await socket.receive_text()
+            try:
+                parsed = json.loads(message)
+            except (json.JSONDecodeError, AttributeError):
+                parsed = {}
+            message_type = parsed.get("type")
+            action = parsed.get("action")
+            may_control = socket is room.controller or (
+                message_type == "command" and action == "stop"
+            )
+            if message_type in {"heartbeat", "command"} and not may_control:
+                if message_type == "command":
+                    await socket.send_text(
+                        json.dumps(
+                            {
+                                "type": "command_status",
+                                "commandId": parsed.get("commandId"),
+                                "status": "rejected",
+                                "detail": "control lease not held",
+                            }
+                        )
+                    )
+                continue
             if await send_text(room.robot, message):
                 continue
-            try:
-                command_id = json.loads(message).get("commandId")
-            except (json.JSONDecodeError, AttributeError):
-                command_id = None
+            if message_type != "command":
+                continue
             await socket.send_text(
                 json.dumps(
                     {
                         "type": "command_status",
-                        "commandId": command_id,
+                        "commandId": parsed.get("commandId"),
                         "status": "failed",
                         "detail": "robot offline",
                     }
@@ -122,12 +210,27 @@ async def client_socket(socket: WebSocket, room_id: str) -> None:
     finally:
         if socket in room.clients:
             room.clients.remove(socket)
+        room.client_can_control.pop(id(socket), None)
+        if room.controller is socket:
+            room.controller = None
+            await send_text(
+                room.robot,
+                json.dumps({"type": "control_lost", "reason": "controller_disconnected"}),
+            )
+            room.controller = next(
+                (client for client in room.clients if room.client_can_control.get(id(client))),
+                None,
+            )
+            await announce_leases(room)
         prune(room_id, room)
 
 
 @app.websocket("/ws/robot/{room_id}/video")
 async def robot_video_socket(socket: WebSocket, room_id: str) -> None:
     await socket.accept()
+    if not await authenticate_robot(socket):
+        await reject_unauthorized(socket)
+        return
     room = room_for(room_id)
     await replace(room, "robot_video", socket)
     try:
@@ -150,6 +253,10 @@ async def robot_video_socket(socket: WebSocket, room_id: str) -> None:
 @app.websocket("/ws/client/{room_id}/video")
 async def client_video_socket(socket: WebSocket, room_id: str) -> None:
     await socket.accept()
+    authorized, _ = await client_access(socket)
+    if not authorized:
+        await reject_unauthorized(socket)
+        return
     room = room_for(room_id)
     room.client_videos.append(socket)
     try:

@@ -1,4 +1,4 @@
-"""Simulated robot for exercising the hackathon relay without hardware."""
+"""Simulated robot that exercises the same edge runtime as hardware adapters."""
 
 from __future__ import annotations
 
@@ -10,11 +10,71 @@ import os
 import time
 from typing import Any
 
+from edge_agent import EdgeAgent, MotionCoordinator, MotionMode
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 
 RELAY_WS_URL = os.getenv("RELAY_WS_URL", "ws://127.0.0.1:8000").rstrip("/")
 ROOM_ID = os.getenv("ROOM_ID", "demo-bot")
+ROBOT_TOKEN = os.getenv("ROBOT_TOKEN")
+
+
+async def authenticate(socket: Any) -> None:
+    if ROBOT_TOKEN:
+        await socket.send(json.dumps({"type": "auth", "token": ROBOT_TOKEN}))
+
+
+class SimulatedMotionAdapter:
+    """Fake one hardware owner while preserving real coordinator semantics."""
+
+    def __init__(self, simulator: "Simulator", mode: MotionMode) -> None:
+        self.simulator = simulator
+        self.mode = mode
+        self.highest_sequence = -1
+        self.session_id: str | None = None
+
+    async def start(self, command_id: str, payload: dict[str, Any]) -> None:
+        self.simulator.status = self.mode.value
+        if self.mode == MotionMode.FREE_CAM:
+            session_id = payload.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                raise ValueError("free cam requires sessionId")
+            self.session_id = session_id
+            self.highest_sequence = -1
+            return
+        if self.mode == MotionMode.FOLLOWING:
+            return
+
+        await asyncio.sleep(0.15)
+        if self.mode == MotionMode.NAVIGATING:
+            if "x" in payload and "y" in payload:
+                self.simulator.x = float(payload["x"])
+                self.simulator.y = float(payload["y"])
+            elif "u" in payload and "v" in payload:
+                u = min(max(float(payload["u"]), 0.0), 1.0)
+                v = min(max(float(payload["v"]), 0.0), 1.0)
+                self.simulator.x += 0.4 + (1.0 - v) * 2.0
+                self.simulator.y += (u - 0.5) * 1.5
+        elif self.mode == MotionMode.INTERACTABLE_TEST:
+            self.simulator.status = f"tested {payload.get('name', 'demo_action')}"
+
+    async def update(self, payload: dict[str, Any]) -> None:
+        if self.mode != MotionMode.FREE_CAM:
+            raise RuntimeError("only Free Cam accepts live updates")
+        if payload.get("sessionId") != self.session_id:
+            raise ValueError("stale Free Cam session")
+        sequence = payload.get("sequence")
+        if not isinstance(sequence, int) or sequence <= self.highest_sequence:
+            raise ValueError("stale Free Cam sequence")
+        self.highest_sequence = sequence
+        pan = float(payload.get("panDeg", 0))
+        tilt = float(payload.get("tiltDeg", 0))
+        if not -60 <= pan <= 60 or not -35 <= tilt <= 45:
+            raise ValueError("Free Cam pose outside bounds")
+
+    async def stop(self, reason: str) -> None:
+        self.session_id = None
+        self.simulator.status = "stopped" if reason != "completed" else "ready"
 
 
 class Simulator:
@@ -28,87 +88,38 @@ class Simulator:
     async def emit(self, socket: Any, message: dict[str, Any]) -> None:
         await socket.send(json.dumps(message))
 
-    async def command_status(
-        self, socket: Any, command_id: str, status: str, detail: str | None = None
-    ) -> None:
-        message: dict[str, Any] = {
-            "type": "command_status",
-            "commandId": command_id,
-            "status": status,
+    def motion(self) -> MotionCoordinator:
+        adapters = {
+            mode: SimulatedMotionAdapter(self, mode)
+            for mode in (
+                MotionMode.NAVIGATING,
+                MotionMode.FOLLOWING,
+                MotionMode.FREE_CAM,
+                MotionMode.INTERACTABLE_TEST,
+            )
         }
-        if detail:
-            message["detail"] = detail
-        self.results[command_id] = message
-        await self.emit(socket, message)
-
-    async def execute(self, socket: Any, command: dict[str, Any]) -> None:
-        command_id = str(command.get("commandId", ""))
-        if not command_id:
-            return
-        if command_id in self.results:
-            await self.emit(socket, self.results[command_id])
-            return
-
-        action = command.get("action")
-        payload = command.get("payload") or {}
-        drop_first = bool(payload.get("dropFirstAck"))
-
-        # Reserve the ID before any await so retries can never execute twice.
-        self.results[command_id] = {
-            "type": "command_status",
-            "commandId": command_id,
-            "status": "executing",
-        }
-        if not drop_first:
-            await self.command_status(socket, command_id, "delivered")
-            await self.command_status(socket, command_id, "accepted")
-            await self.command_status(socket, command_id, "executing")
-
-        self.status = str(action or "working")
-        await asyncio.sleep(0.65)
-        if action == "move_to":
-            self.x = float(payload.get("x", self.x))
-            self.y = float(payload.get("y", self.y))
-        elif action == "move_to_view":
-            # Demo-only image-to-ground approximation. The hardware adapter will
-            # replace this with depth/calibration plus navigation planning.
-            u = min(max(float(payload.get("u", 0.5)), 0.0), 1.0)
-            v = min(max(float(payload.get("v", 0.75)), 0.0), 1.0)
-            forward = 0.4 + (1.0 - v) * 2.0
-            lateral = (u - 0.5) * 1.5
-            self.x += forward
-            self.y += lateral
-        elif action == "stop":
-            self.status = "stopped"
-        elif action == "use_action":
-            self.status = f"used {payload.get('name', 'demo_action')}"
-        self.status = "ready" if action != "stop" else "stopped"
-        result = {
-            "type": "command_status",
-            "commandId": command_id,
-            "status": "succeeded",
-        }
-        self.results[command_id] = result
-        await self.emit(socket, result)
+        return MotionCoordinator(adapters)
 
     async def control_session(self) -> None:
         uri = f"{RELAY_WS_URL}/ws/robot/{ROOM_ID}"
         async with connect(uri, ping_interval=10, ping_timeout=20) as socket:
+            await authenticate(socket)
             print(f"[sim] control connected: {uri}", flush=True)
+            agent = EdgeAgent(self.motion(), lambda message: self.emit(socket, message), journal=self.results)
+            await agent.start()
 
             async def states() -> None:
                 while True:
-                    await self.emit(
-                        socket,
+                    state = agent.state()
+                    state.update(
                         {
-                            "type": "robot_state",
-                            "at": int(time.time() * 1000),
                             "ready": True,
                             "status": self.status,
                             "pose": {"x": self.x, "y": self.y, "heading": self.heading},
-                        },
+                        }
                     )
-                    await asyncio.sleep(0.5)
+                    await self.emit(socket, state)
+                    await asyncio.sleep(0.25)
 
             async def commands() -> None:
                 async for raw in socket:
@@ -116,10 +127,18 @@ class Simulator:
                         message = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
-                    if message.get("type") == "command":
-                        asyncio.create_task(self.execute(socket, message))
+                    if message.get("type") == "heartbeat":
+                        agent.heartbeat()
+                    elif message.get("type") == "control_lost":
+                        await agent.control_lost(str(message.get("reason", "control_disconnected")))
+                    elif message.get("type") == "command":
+                        asyncio.create_task(agent.handle_command(message))
 
-            await asyncio.gather(states(), commands())
+            try:
+                await asyncio.gather(states(), commands())
+            finally:
+                await agent.control_lost("relay_disconnected")
+                await agent.close()
 
     def frame(self, tick: int) -> bytes:
         width, height = 640, 360
@@ -140,6 +159,7 @@ class Simulator:
     async def video_session(self) -> None:
         uri = f"{RELAY_WS_URL}/ws/robot/{ROOM_ID}/video"
         async with connect(uri, ping_interval=10, ping_timeout=20, max_size=None) as socket:
+            await authenticate(socket)
             print(f"[sim] video connected: {uri}", flush=True)
             tick = 0
             while True:

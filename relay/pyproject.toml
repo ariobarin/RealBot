@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
   "pillow>=11,<12",
+  "realbot-edge-agent",
   "uvicorn[standard]>=0.34,<1",
   "websockets>=14,<16",
 ]
@@ -16,6 +17,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["app", "simulator"]
+
+[tool.uv.sources]
+realbot-edge-agent = { path = "../edge_agent", editable = true }
 
 [dependency-groups]
 dev = [

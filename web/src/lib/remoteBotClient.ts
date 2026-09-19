@@ -9,6 +9,11 @@ export interface RobotState {
   at: number
   mapId?: string
   mapRevision?: string
+  motionMode?: 'idle' | 'navigating' | 'following' | 'free_cam' | 'interactable_test' | 'faulted'
+  motionOwnerCommandId?: string | null
+  motionFault?: string | null
+  controlLease?: 'inactive' | 'active' | 'expired'
+  lastStopReason?: string | null
 }
 
 export interface MapPoint {
@@ -31,7 +36,15 @@ export interface CommandEnvelope {
   createdAt: number
   expiresAt: number
   action:
-    'move_to' | 'move_to_view' | 'stop' | 'use_action' | 'free_cam_start' | 'free_cam_pose' | 'free_cam_stop'
+    | 'move_to'
+    | 'move_to_view'
+    | 'stop'
+    | 'use_action'
+    | 'follow_start'
+    | 'follow_stop'
+    | 'free_cam_start'
+    | 'free_cam_pose'
+    | 'free_cam_stop'
   payload: Record<string, unknown>
 }
 
@@ -46,6 +59,7 @@ export interface CommandUpdate {
 export type RemoteBotEvent =
   | { type: 'connection'; phase: ConnectionPhase }
   | { type: 'presence'; online: boolean }
+  | { type: 'lease'; acquired: boolean }
   | { type: 'state'; state: RobotState }
   | { type: 'navigation'; navigation: NavigationTelemetry }
   | { type: 'command'; update: CommandUpdate }
@@ -74,10 +88,12 @@ export class RemoteBotClient {
   private control?: WebSocket
   private video?: WebSocket
   private reconnectTimer?: number
+  private heartbeatTimer?: number
   private reconnectAttempt = 0
   private generation = 0
   private shouldReconnect = false
   private roomId = ''
+  private relayToken?: string
   private pending = new Map<string, Pending>()
 
   subscribe(listener: Listener) {
@@ -89,9 +105,10 @@ export class RemoteBotClient {
     for (const listener of this.listeners) listener(event)
   }
 
-  connect(roomId: string) {
+  connect(roomId: string, relayToken?: string) {
     this.disconnect()
     this.roomId = roomId
+    this.relayToken = relayToken
     this.shouldReconnect = true
     this.reconnectAttempt = 0
     this.open('connecting')
@@ -101,7 +118,9 @@ export class RemoteBotClient {
     this.shouldReconnect = false
     this.generation += 1
     if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer)
+    if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer)
     this.reconnectTimer = undefined
+    this.heartbeatTimer = undefined
     this.control?.close()
     this.video?.close()
     this.control = undefined
@@ -127,6 +146,7 @@ export class RemoteBotClient {
 
     control.onopen = () => {
       if (generation !== this.generation) return
+      if (this.relayToken) control.send(JSON.stringify({ type: 'auth', token: this.relayToken }))
       this.reconnectAttempt = 0
       this.emit({ type: 'connection', phase: 'waiting' })
     }
@@ -134,6 +154,9 @@ export class RemoteBotClient {
     control.onclose = () => {
       if (generation !== this.generation || !this.shouldReconnect) return
       video.close()
+      if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = undefined
+      this.emit({ type: 'lease', acquired: false })
       this.emit({ type: 'presence', online: false })
       this.scheduleReconnect()
     }
@@ -142,6 +165,9 @@ export class RemoteBotClient {
     video.onmessage = (event) => {
       const frame = event.data instanceof Blob ? event.data : new Blob([event.data], { type: 'image/jpeg' })
       this.emit({ type: 'video', frame })
+    }
+    video.onopen = () => {
+      if (this.relayToken) video.send(JSON.stringify({ type: 'auth', token: this.relayToken }))
     }
   }
 
@@ -162,6 +188,22 @@ export class RemoteBotClient {
       const online = Boolean(message.online)
       this.emit({ type: 'presence', online })
       this.emit({ type: 'connection', phase: online ? 'online' : 'waiting' })
+      return
+    }
+    if (message.type === 'control_lease') {
+      const acquired = Boolean(message.acquired)
+      if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = undefined
+      if (acquired) {
+        const heartbeat = () => {
+          if (this.control?.readyState === WebSocket.OPEN) {
+            this.control.send(JSON.stringify({ type: 'heartbeat', at: Date.now() }))
+          }
+        }
+        heartbeat()
+        this.heartbeatTimer = window.setInterval(heartbeat, 1_000)
+      }
+      this.emit({ type: 'lease', acquired })
       return
     }
     if (message.type === 'robot_state') {
