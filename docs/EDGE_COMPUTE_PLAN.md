@@ -33,7 +33,14 @@ The first working vertical slice must support:
 8. Reconnection without replaying expired commands.
 9. A visitor minimap using the robot's authoritative pose and route.
 
-The hackathon version does not require durable storage, multiple controllers, production authentication, WebRTC, a database, or a general-purpose remote shell.
+The hackathon version does not require durable storage, multiple controllers,
+production authentication, WebRTC, a database, or a general-purpose remote
+shell.
+
+This remains true for the edge-agent hackathon slice. The separately planned
+browser authentication work is documented in
+[`REALTOR_GUEST_AUTH_PLAN.md`](REALTOR_GUEST_AUTH_PLAN.md) and does not add robot
+authentication responsibilities to the edge agent.
 
 ## 3. Proposed package
 

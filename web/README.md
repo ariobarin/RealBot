@@ -12,6 +12,10 @@ simulated: the application is not connected to a physical robot or BracketBot Cl
 Non-authoritative notes about the current prototype, the immediate hackathon relay, and a
 possible later remote camera/control architecture are in
 [`../docs/REMOTE_CONTROL_DIRECTION.md`](../docs/REMOTE_CONTROL_DIRECTION.md).
+The decided implementation direction for browser authentication is in
+[`../docs/REALTOR_GUEST_AUTH_PLAN.md`](../docs/REALTOR_GUEST_AUTH_PLAN.md): Supabase Auth for
+invitation-only realtor accounts and accountless, expiring guest invitations for visitors. Robot
+authentication is outside that plan.
 
 ## Run
 
@@ -54,6 +58,13 @@ The credentials can be changed with `VITE_REALTOR_EMAIL` and `VITE_REALTOR_PASSW
 deliberately lightweight client-side access control for the hackathon prototype, not production
 authentication. Visitors are redirected away from realtor-only routes; realtor sessions can switch
 between management and the exact visitor experience.
+
+Do not extend this demo credential mechanism. The planned migration replaces it with Supabase
+realtor sessions and replaces visitor-entered room IDs with realtor-created invitation links. A
+visitor supplies a display name and, when configured, an optional contact email and separately
+shared secret/PIN; this creates only a temporary tour-scoped guest session, not an account. Browser
+WebSockets will require short-lived tickets after that session is authorized. Until the migration is
+complete, neither the frontend route guard nor knowledge of a room ID provides a security boundary.
 
 The realtor dashboard's **Preview as user** link opens the real user route rather than a
 separate mock. Both views receive the same camera frames and robot state. Clicking the live image

@@ -19,6 +19,10 @@ Credentials belong in local environment variables or ignored `.env` files.
 
 ## Planning references
 
+- [`docs/REALTOR_GUEST_AUTH_PLAN.md`](docs/REALTOR_GUEST_AUTH_PLAN.md) records
+  the implementation decision for Supabase-backed realtor accounts and
+  accountless, invitation-based visitor access. It does not cover robot
+  authentication.
 - [`docs/REMOTE_CONTROL_DIRECTION.md`](docs/REMOTE_CONTROL_DIRECTION.md) records
   non-authoritative working notes about the current web prototype, the immediate
   hackathon relay, and possible later remote-control architecture. It is context

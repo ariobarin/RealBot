@@ -3,6 +3,14 @@
 Small in-memory WebSocket relay plus a simulated robot. This is a disposable
 hackathon component, not a production device gateway.
 
+The current relay does not authenticate browser or robot sockets; knowing a room
+ID is sufficient to join. The planned browser-side boundary is documented in
+[`../docs/REALTOR_GUEST_AUTH_PLAN.md`](../docs/REALTOR_GUEST_AUTH_PLAN.md):
+Supabase-authenticated realtors and accountless guest invitations exchange their
+sessions for short-lived socket tickets before joining `/ws/client/...`. That
+work intentionally leaves `/ws/robot/...` authentication unchanged and out of
+scope.
+
 ```sh
 cd relay
 uv sync
