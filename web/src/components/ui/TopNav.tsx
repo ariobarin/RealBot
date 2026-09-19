@@ -6,6 +6,7 @@ import { HouseIcon } from '../icons/HouseIcon'
 import { KeyRingIcon } from '../icons/KeyRingIcon'
 import { MapPinIcon } from '../icons/MapPinIcon'
 import { Wordmark } from '../brand/Logo'
+import { AccountMenu } from './AccountMenu'
 
 const tabs = [
   { to: '/', label: 'Tours', Icon: MapPinIcon, end: true },
@@ -49,23 +50,16 @@ export function TopNav() {
       </nav>
 
       <div className="flex items-center gap-3">
-        {session?.role === 'realtor' ? (
-          <Link
-            to="/realtor"
-            className="grid size-10 place-items-center rounded-full bg-brand text-sm font-bold text-white no-underline shadow-sm"
-            aria-label="Your account"
-          >
-            {session.email.slice(0, 1).toUpperCase()}
-          </Link>
-        ) : (
+        {session?.role !== 'realtor' && (
           <Link
             to="/signin"
-            className="icon-hover flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft"
+            className="icon-hover hidden items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft md:flex"
           >
             <KeyRingIcon size={36} />
-            <span className="hidden sm:inline">Realtor sign in</span>
+            Realtor sign in
           </Link>
         )}
+        <AccountMenu />
       </div>
     </header>
   )
