@@ -29,6 +29,38 @@ npm run test:e2e     # playwright (first time: npx playwright install chromium)
 npm run build
 ```
 
+## Hackathon remote-control demo
+
+Run the lightweight relay and simulator in separate terminals:
+
+```sh
+cd relay
+uv sync
+uv run uvicorn app:app --reload --port 8000
+```
+
+```sh
+cd relay
+uv run python simulator.py
+```
+
+Then run `web/` and open `/`. The login portal offers two role-aware paths:
+
+- **Visitor**: enter a tour access code (the relay room ID) to open `/user/:roomId`.
+- **Realtor**: use `realtor@realbot.demo` / `demo` to open `/realtor`, then enter the operator
+  dashboard with room, transport, pose, and command diagnostics.
+
+The credentials can be changed with `VITE_REALTOR_EMAIL` and `VITE_REALTOR_PASSWORD`. This is
+deliberately lightweight client-side access control for the hackathon prototype, not production
+authentication. Visitors are redirected away from realtor-only routes; realtor sessions can switch
+between management and the exact visitor experience.
+
+The realtor dashboard's **Preview as user** link opens the real user route rather than a
+separate mock. Both views receive the same camera frames and robot state. Clicking the live image
+sends `move_to_view` with normalized image coordinates; `stop` and `use_action` use the same
+acknowledged command channel. The SLAM map is realtor-only telemetry and is not a second steering
+surface. Set `VITE_RELAY_WS_URL` when the relay is not on port 8000 of the same host.
+
 ## Maps
 
 Every layout is a SLAM occupancy grid using the robot's `mapping.grid2d` encoding

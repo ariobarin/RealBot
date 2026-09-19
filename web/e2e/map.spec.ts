@@ -1,4 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
+import { authenticateRealtor } from './auth'
+
+test.beforeEach(async ({ page }) => authenticateRealtor(page))
 
 const hasWebGL = (page: Page) =>
   page.evaluate(() => {
@@ -21,7 +24,7 @@ test('map view loads the SLAM grid with HUD, legend and view controls', async ({
   await page.getByTestId('reset-view').click()
 
   await page.getByRole('link', { name: /Your spaces/ }).click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/realtor')
 })
 
 test('TurtleBot3 Sandbox renders through the same map view', async ({ page }) => {
@@ -56,7 +59,7 @@ test('unknown map id shows an error with a way back', async ({ page }) => {
   await page.goto('/map/nope')
   await expect(page.getByRole('alert')).toContainText('No space with id "nope"')
   await page.getByRole('button', { name: 'Back to your spaces' }).click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/realtor')
 })
 
 test('without WebGL the scene falls back to the flat scan', async ({ page }) => {
