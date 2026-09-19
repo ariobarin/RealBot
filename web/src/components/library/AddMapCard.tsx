@@ -1,20 +1,21 @@
 import { motion } from 'framer-motion'
 import { Plus } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { fadeUp, spring } from '../../lib/motion'
 
-/** Placeholder: the add flow lands after Sprint 2. Intentionally inert. */
+const MotionLink = motion.create(Link)
+
 export function AddMapCard() {
   return (
     <motion.li variants={fadeUp} className="list-none">
-      <motion.button
-        type="button"
+      <MotionLink
+        to="/onboard"
         data-testid="add-card"
-        aria-label="Add a space (coming soon)"
-        title="Coming soon"
+        aria-label="Add a space"
         whileHover="hover"
         whileTap={{ scale: 0.98 }}
         transition={spring}
-        className="group flex aspect-[4/3] w-full cursor-default flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-line bg-white text-ink-2 transition-colors duration-250 hover:border-brand hover:bg-brand-soft/40"
+        className="group flex aspect-[4/3] w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-line bg-white text-ink-2 no-underline transition-colors duration-250 hover:border-brand hover:bg-brand-soft/40"
       >
         <motion.span
           variants={{ hover: { rotate: 90, scale: 1.08 } }}
@@ -25,7 +26,7 @@ export function AddMapCard() {
         </motion.span>
         <span className="text-sm font-semibold text-ink">Add a space</span>
         <span className="text-xs text-ink-3">Pair a bracketbot and scan</span>
-      </motion.button>
+      </MotionLink>
     </motion.li>
   )
 }
