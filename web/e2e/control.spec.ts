@@ -12,6 +12,11 @@ test('connect screen remembers a room and opens the control dashboard', async ({
   await expect(page.getByRole('button', { name: 'Stop' })).toBeDisabled()
   await expect(page.getByRole('heading', { name: 'Command activity' })).toHaveCount(0)
   await expect(page.getByText('SLAM telemetry')).toHaveCount(0)
+  const [pageHeight, viewportHeight] = await page.evaluate(() => [
+    document.documentElement.scrollHeight,
+    window.innerHeight,
+  ])
+  expect(pageHeight).toBeLessThanOrEqual(viewportHeight)
 })
 
 test('realtor dashboard can enter the exact user view', async ({ page }) => {

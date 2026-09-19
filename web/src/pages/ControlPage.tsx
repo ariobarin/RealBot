@@ -97,8 +97,8 @@ export function ControlPage({ view }: ControlPageProps) {
     : undefined
 
   return (
-    <PageShell wide>
-      <header className="flex items-center justify-between gap-4">
+    <PageShell wide viewport={!isRealtor}>
+      <header className="flex shrink-0 items-center justify-between gap-4">
         <Wordmark />
         <div className="flex items-center gap-3">
           <span
@@ -132,7 +132,7 @@ export function ControlPage({ view }: ControlPageProps) {
       </header>
 
       {isRealtorPreview && (
-        <div className="mt-5 flex items-center justify-between gap-4 rounded-2xl border border-brand/20 bg-brand-soft px-4 py-3 text-sm">
+        <div className="mt-3 flex shrink-0 items-center justify-between gap-4 rounded-2xl border border-brand/20 bg-brand-soft px-4 py-2 text-sm">
           <span>
             <strong>Preview mode:</strong> this is the exact experience a user sees.
           </span>
@@ -145,7 +145,9 @@ export function ControlPage({ view }: ControlPageProps) {
         </div>
       )}
 
-      <section className="mt-6 flex flex-wrap items-center justify-between gap-4">
+      <section
+        className={`flex shrink-0 flex-wrap items-center justify-between gap-4 ${isRealtor ? 'mt-6' : 'mt-3'}`}
+      >
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-ink-3">
             {isRealtor ? 'Realtor operations' : 'Remote tour'}
@@ -174,16 +176,20 @@ export function ControlPage({ view }: ControlPageProps) {
       </section>
 
       <div
-        className={`mt-6 grid gap-6 ${isRealtor ? 'xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]' : ''}`}
+        className={`grid gap-6 ${isRealtor ? 'mt-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]' : 'mt-3 min-h-0 flex-1'}`}
       >
-        <section className="overflow-hidden rounded-3xl border border-line bg-[#20242b] shadow-md">
+        <section
+          className={`overflow-hidden rounded-3xl border border-line bg-[#20242b] shadow-md ${isRealtor ? '' : 'flex min-h-0 flex-col'}`}
+        >
           <div className="flex items-center justify-between px-5 py-4 text-white">
             <div className="flex items-center gap-2 font-semibold">
               <Video size={18} /> Live camera
             </div>
             {isRealtor && <span className="text-xs text-white/60">JPEG relay</span>}
           </div>
-          <div className="relative grid aspect-video place-items-center overflow-hidden bg-[#171a1f]">
+          <div
+            className={`relative grid place-items-center overflow-hidden bg-[#171a1f] ${isRealtor ? 'aspect-video' : 'min-h-0 flex-1'}`}
+          >
             {frameUrl ? (
               <img
                 src={frameUrl}
@@ -211,7 +217,7 @@ export function ControlPage({ view }: ControlPageProps) {
               />
             )}
           </div>
-          <div className="flex items-center gap-3 px-5 py-4 text-sm text-white/80">
+          <div className="flex shrink-0 items-center gap-3 px-5 py-3 text-sm text-white/80">
             <Bot size={17} />
             <span>{robot?.status || phaseCopy[phase]}</span>
             {isRealtor && robot && (
@@ -258,7 +264,7 @@ export function ControlPage({ view }: ControlPageProps) {
           )}
         </section>
       ) : (
-        <div className="mt-6 min-h-12 text-center text-sm text-ink-2" aria-live="polite">
+        <div className="mt-2 min-h-5 shrink-0 text-center text-sm text-ink-2" aria-live="polite">
           {commands[0]
             ? `${commands[0].action === 'move_to_view' ? 'Move' : commands[0].action?.replaceAll('_', ' ')} · ${commands[0].status}`
             : 'Click a place in the camera feed to move there.'}
