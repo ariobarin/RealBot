@@ -47,6 +47,7 @@ export function ControlPage({ view }: ControlPageProps) {
   const isRealtorPreview = !isRealtor && session?.role === 'realtor'
   const client = useMemo(() => new RemoteBotClient(), [])
   const [phase, setPhase] = useState<ConnectionPhase>('connecting')
+  const [hasControl, setHasControl] = useState(false)
   const [robot, setRobot] = useState<RobotState>()
   const [frameUrl, setFrameUrl] = useState<string>()
   const [commands, setCommands] = useState<CommandUpdate[]>([])
@@ -59,6 +60,7 @@ export function ControlPage({ view }: ControlPageProps) {
   const freeCamLifecycle = useRef<FreeCamLifecycle | undefined>(undefined)
   const freeCamSequence = useRef(0)
   const { status: gridStatus, grid, load } = useGridStore()
+  const relayToken = (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_RELAY_TOKEN
 
   const mapId = navigation?.mapId || robot?.mapId || 'small-house'
 
@@ -70,6 +72,15 @@ export function ControlPage({ view }: ControlPageProps) {
     let currentFrame: string | undefined
     const unsubscribe = client.subscribe((event) => {
       if (event.type === 'connection') setPhase(event.phase)
+      if (event.type === 'lease') {
+        setHasControl(event.acquired)
+        if (!event.acquired) {
+          freeCamLifecycle.current = undefined
+          setFreeCamPhase('off')
+          setFreeCamOpen(false)
+          setFreeCamSessionId(undefined)
+        }
+      }
       if (event.type === 'presence' && !event.online) {
         freeCamLifecycle.current = undefined
         setFreeCamPhase('off')
@@ -115,18 +126,18 @@ export function ControlPage({ view }: ControlPageProps) {
         })
       }
     })
-    client.connect(roomId)
+    client.connect(roomId, relayToken)
     return () => {
       unsubscribe()
       client.disconnect()
       if (currentFrame) URL.revokeObjectURL(currentFrame)
       useViewStore.getState().clearWaypoints()
     }
-  }, [client, roomId])
+  }, [client, relayToken, roomId])
 
   const online = phase === 'online'
   const sendViewTarget = (event: MouseEvent<HTMLImageElement>) => {
-    if (!online || !frameUrl || freeCamPhase !== 'off') return
+    if (!online || !hasControl || !frameUrl || freeCamPhase !== 'off') return
     const rect = event.currentTarget.getBoundingClientRect()
     const u = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
     const v = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1)
@@ -139,7 +150,7 @@ export function ControlPage({ view }: ControlPageProps) {
   }
 
   const startFreeCam = () => {
-    if (!online || freeCamPhase !== 'off') return
+    if (!online || !hasControl || freeCamPhase !== 'off') return
     const sessionId = crypto.randomUUID()
     freeCamSequence.current = 0
     setFreeCamSessionId(sessionId)
@@ -198,6 +209,14 @@ export function ControlPage({ view }: ControlPageProps) {
             <span className={`size-2 rounded-full ${online ? 'bg-green-600' : 'bg-ink-3'}`} />
             {phaseCopy[phase]}
           </span>
+          {online && (
+            <span
+              data-testid="control-lease"
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${hasControl ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}
+            >
+              {hasControl ? 'Control active' : 'View only'}
+            </span>
+          )}
           {isRealtor ? (
             <>
               <Link
@@ -262,7 +281,7 @@ export function ControlPage({ view }: ControlPageProps) {
           {!isRealtor && (
             <Button
               variant="secondary"
-              disabled={!online || freeCamPhase === 'starting' || freeCamPhase === 'stopping'}
+              disabled={!online || !hasControl || freeCamPhase === 'starting' || freeCamPhase === 'stopping'}
               onClick={() => {
                 if (freeCamPhase === 'active') void stopFreeCam()
                 else setFreeCamOpen((open) => !open)
@@ -273,7 +292,7 @@ export function ControlPage({ view }: ControlPageProps) {
           )}
           <Button
             variant="secondary"
-            disabled={!online || freeCamPhase !== 'off'}
+            disabled={!online || !hasControl || freeCamPhase !== 'off'}
             onClick={() => client.sendCommand('use_action', { name: 'demo_action' })}
           >
             <Sparkles size={17} /> Use action
@@ -307,7 +326,7 @@ export function ControlPage({ view }: ControlPageProps) {
                     ? 'Live left-hand camera from bracketbot'
                     : 'Live camera from bracketbot'
                 }
-                className={`size-full object-cover ${online && freeCamPhase === 'off' ? 'cursor-crosshair' : 'cursor-default'}`}
+                className={`size-full object-cover ${online && hasControl && freeCamPhase === 'off' ? 'cursor-crosshair' : 'cursor-default'}`}
                 onClick={sendViewTarget}
               />
             ) : (
@@ -360,6 +379,12 @@ export function ControlPage({ view }: ControlPageProps) {
           <div className="flex shrink-0 items-center gap-3 px-5 py-3 text-sm text-white/80">
             <Bot size={17} />
             <span>{robot?.status || phaseCopy[phase]}</span>
+            {robot?.motionMode && (
+              <span data-testid="motion-mode" className="rounded-full bg-white/10 px-2 py-1 text-xs">
+                {robot.motionMode.replaceAll('_', ' ')}
+              </span>
+            )}
+            {robot?.motionFault && <span className="text-xs text-red-300">{robot.motionFault}</span>}
             {isRealtor && robot && (
               <span className="ml-auto font-mono text-xs text-white/55">
                 {robot.pose.x.toFixed(2)}, {robot.pose.y.toFixed(2)}
