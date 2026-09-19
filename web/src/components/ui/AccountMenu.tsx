@@ -7,7 +7,7 @@ import { EASE_OUT } from '../../lib/motion'
 
 type Item = { label: string; to?: string; onSelect?: () => void; strong?: boolean }
 
-/** The header's account pill — hamburger + avatar — and the menu it opens. */
+/** The realtor's account pill — hamburger + avatar — and the menu it opens. Visitors never see it. */
 export function AccountMenu() {
   const { session, logout } = useAuth()
   const navigate = useNavigate()
@@ -37,41 +37,22 @@ export function AccountMenu() {
   }
 
   const room = localStorage.getItem('realbot-room') || 'demo-bot'
-  const groups: Item[][] =
-    session?.role === 'realtor'
-      ? [
-          [
-            { label: 'Manage spaces', to: '/realtor', strong: true },
-            { label: 'Your bookings', to: '/bookings' },
-            { label: 'Add a space', to: '/onboard' },
-            { label: 'Open robot dashboard', to: `/realtor/control/${encodeURIComponent(room)}` },
-          ],
-          [
-            { label: 'Browse open tours', to: '/' },
-            { label: 'Preview as user', to: `/user/${encodeURIComponent(room)}` },
-          ],
-          [{ label: 'Sign out', onSelect: signOut }],
-        ]
-      : session?.role === 'visitor'
-        ? [
-            [{ label: 'Back to your tour', to: `/user/${encodeURIComponent(session.roomId)}`, strong: true }],
-            [
-              { label: 'Browse open tours', to: '/' },
-              { label: 'Realtor sign in', to: '/signin' },
-            ],
-            [{ label: 'Leave tour', onSelect: signOut }],
-          ]
-        : [
-            [
-              { label: 'Realtor sign in', to: '/signin', strong: true },
-              { label: 'Browse open tours', to: '/' },
-            ],
-            [{ label: 'How tours work', to: '/#open-tours' }],
-          ]
+  const groups: Item[][] = [
+    [
+      { label: 'Manage spaces', to: '/realtor', strong: true },
+      { label: 'Your bookings', to: '/bookings' },
+      { label: 'Add a space', to: '/onboard' },
+      { label: 'Open robot dashboard', to: `/realtor/control/${encodeURIComponent(room)}` },
+    ],
+    [
+      { label: 'Browse open tours', to: '/' },
+      { label: 'Preview as user', to: `/user/${encodeURIComponent(room)}` },
+    ],
+    [{ label: 'Sign out', onSelect: signOut }],
+  ]
 
-  const initial = session
-    ? (session.role === 'realtor' ? session.email : session.roomId).slice(0, 1).toUpperCase()
-    : null
+  // Only rendered for realtors; the email's first letter is the avatar.
+  const initial = session?.role === 'realtor' ? session.email.slice(0, 1).toUpperCase() : null
 
   return (
     <div ref={root} className="relative">

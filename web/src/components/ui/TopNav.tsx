@@ -18,7 +18,9 @@ const manage = { to: '/realtor', label: 'Manage spaces', Icon: HouseIcon, end: f
 /** `actions` render to the left of the account pill on signed-in pages. */
 export function TopNav({ actions }: { actions?: ReactNode }) {
   const { session } = useAuth()
-  const tabs = session?.role === 'realtor' ? [tours, bookings, manage] : [tours, bookings]
+  // A visitor session is just the tour they joined, not an account: only realtors get the pill.
+  const realtor = session?.role === 'realtor'
+  const tabs = realtor ? [tours, bookings, manage] : [tours, bookings]
   return (
     <header className="flex h-[84px] items-center justify-between gap-6 border-b border-line px-6 sm:px-10">
       <Wordmark />
@@ -53,7 +55,7 @@ export function TopNav({ actions }: { actions?: ReactNode }) {
       </nav>
 
       <div className="flex items-center gap-3">
-        {session ? (
+        {realtor ? (
           <>
             {actions}
             <AccountMenu />
