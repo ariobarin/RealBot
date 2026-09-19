@@ -31,6 +31,20 @@ body,
   min-height: 100%;
 }
 
+/* Tailwind 4 resets buttons to the default cursor; everything clickable gets the hand. */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+[role='tab'],
+[role='menuitem'],
+summary,
+label:has(> input[type='checkbox']),
+label:has(> input[type='radio']) {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
 body {
   margin: 0;
   background: var(--bg);
