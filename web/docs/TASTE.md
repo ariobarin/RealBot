@@ -32,8 +32,8 @@ grey-on-grey below 4.5:1. Brand is for _action_, not decoration.
 
 ## 2. Type
 
-Inter (Airbnb Cereal is proprietary; Inter with `-0.01em` tracking is the closest free fit).
-Loaded from rsms.me; falls back to system-ui.
+Figtree (Airbnb Cereal is proprietary; Figtree at 700–800 with `-0.035em` tracking on titles is
+the closest free fit). Loaded from Google Fonts; falls back to system-ui.
 
 | Role          | Size / weight                          |
 | ------------- | -------------------------------------- |
@@ -50,7 +50,8 @@ scan". No exclamation marks. Sentence case everywhere.
 
 - Radii: `8 / 12 / 16 / 24 / pill`. Cards and thumbnails are `rounded-2xl` (16). Buttons are pills.
 - Spacing scale is Tailwind's 4 px grid. Card grids: `gap-x-6 gap-y-10`. Page gutters `px-6 sm:px-10`.
-- Shadows: `sm` at rest, `md` on hover, `lg` for floating panels. Never a border _and_ a shadow.
+- Shadows: `sm` at rest, `lg` for floating panels. Cards do not move or grow on hover — the
+  thumbnail well darkens one step (`bg-soft` → `bg-hover`), nothing else.
 - Grids use `repeat(auto-fill, minmax(260px, 1fr))` so any item count lays out well.
 
 ## 4. Motion
@@ -62,7 +63,8 @@ Principles
    hover/tap/morph; `cubic-bezier(.2,.8,.2,1)` 250 ms for fades and rises.
 3. **Shared layout over crossfade.** If A _becomes_ B (card → page, orb → button), use a Framer
    `layoutId` so the eye follows it.
-4. **Small distances.** Entrances rise ≤ 16 px. Hover lifts ≤ 2 px and scales ≤ 1.03.
+4. **Small distances.** Entrances rise ≤ 16 px. Buttons may scale ≤ 1.03 on hover; cards and
+   thumbnails never move — they change colour.
 5. **Stagger, but cap it.** Lists stagger children ≤ 60 ms each, and the total spread never
    exceeds ~600 ms regardless of count (`staggerList()` in `lib/motion.ts`).
 6. **Respect `prefers-reduced-motion`.** Global CSS clamps durations to 1 ms; Framer springs
@@ -78,7 +80,7 @@ Catalogue of shared pieces
 | ---------------------- | -------------------------------------------------------------------------- |
 | Page enter / exit      | fade + 8 px rise in 300 ms; exit fade + 8 px up in 180 ms (`pageVariants`) |
 | Card grid              | staggered `fadeUp`                                                         |
-| Card hover             | lift 2 px, shadow sm→md, thumbnail scale 1.03 over 300 ms                  |
+| Card hover             | thumbnail well darkens one step in 150 ms; nothing moves                   |
 | Add card hover         | `+` rotates 90° with spring, dashed border → brand, fill → brand-soft      |
 | Button                 | hover scale 1.02, tap 0.97, spring                                         |
 | Skeleton               | 1.6 s shimmer                                                              |
@@ -99,3 +101,42 @@ Catalogue of shared pieces
 Lighthouse a11y ≥ 95. Every image has an alt that says what it _is_ ("SLAM floor plan of Small
 House"). Every icon-only control has `aria-label`. Colour is never the only status signal (pills
 carry text). Keyboard order follows visual order.
+
+## 5. Icons
+
+The personality lives in the icons (`src/components/icons/`), the way Airbnb's nav does it: the
+page is still, the icons are alive. Every hero icon is a small object on a 96-unit grid with a
+front face and a darker side face, one light source top-left, a contact shadow underneath, and
+exactly one `--brand` part. Each has a **quiet idle loop** (≤ 3 px of travel) and **one bigger
+move on hover**, triggered by an `.icon-hover` ancestor. Two intensities: the header tabs add
+`.lively` and get the full spring — a lift, a jump, a big swing — because that's the one place
+the icons are the show; everywhere else (cards, hints, empty states) the hover is small and
+eased, never a bounce or a lift:
+
+| Icon          | Idle                        | Hover                            | Where                          |
+| ------------- | --------------------------- | -------------------------------- | ------------------------------ |
+| `HouseIcon`   | tree sways                  | door swings open, chimney smokes | Manage spaces tab, empty state |
+| `MapPinIcon`  | pin hovers, route flows     | small hop                        | Tours tab                      |
+| `RobotIcon`   | lens blinks, antenna pulses | wheels spin, slight lean         | Go live, pairing, status       |
+| `KeyRingIcon` | hangs and swings            | gentle swing, tag nods           | Realtor sign in                |
+
+Small UI glyphs (arrows, chevrons, close) stay lucide. The Tours hero also has the one large
+motion on that page: `WordCarousel`, a three-row picker wheel of place types (0.9 s hold, 0.32 s
+move, six tints, a one-row window so only the live word shows at rest). Nothing else on the page should compete with it.
+
+## 6. Logo
+
+`src/components/brand/Logo.tsx`. The mark is the robot's face — rounded body, two eyes, one
+antenna — always `--brand` on white or white on `--brand` (`tone="reversed"`); `tone="ink"` is
+for print and mono only. Never outlined, never another colour. The wordmark is Figtree 800,
+lower-case `realbot`, tracked −0.04em, sized 0.86× the mark. `Logo` is the lockup, `LogoMark`
+the face alone, `Wordmark` the header lockup linking home. Minimums: mark 16 px, lockup 20 px.
+Clear space is one eye-width. `public/favicon.svg` is the mark.
+
+## 7. Scenes
+
+Add a space uses four larger stages (`src/components/onboarding/Scenes.tsx`, 560×420 in
+`scenes.css`): the bot boots, rolls in through the front door onto the HOME ring, pairs over radio,
+and walks the plan with a scan cone while the walls draw in behind it. Same language as the icons
+— front and side faces, one coral part, contact shadows — and the same restraint: every loop is
+slow and eased, and they are the only large motion on that page.

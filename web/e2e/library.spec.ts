@@ -14,8 +14,7 @@ test('library shows the preset SLAM map and an add card', async ({ page }) => {
   await expect(cards.first().getByRole('img')).toHaveAttribute('alt', /SLAM floor plan/)
 
   await expect(page.getByTestId('add-card')).toHaveAttribute('href', '/onboard')
-  await expect(page.getByRole('button', { name: 'Preview user view' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Open robot dashboard' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Add a space' })).toBeVisible()
 })
 
 test('map card navigates to the map view', async ({ page }) => {
@@ -29,5 +28,5 @@ test('map card navigates to the map view', async ({ page }) => {
 
 test('onboarding is reachable by URL', async ({ page }) => {
   await page.goto('/onboard')
-  await expect(page.getByRole('heading', { name: /Scan a space/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Add a space' })).toBeVisible()
 })

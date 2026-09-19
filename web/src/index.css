@@ -4,6 +4,7 @@
 @theme {
   --color-bg: var(--bg);
   --color-bg-soft: var(--bg-soft);
+  --color-bg-hover: var(--bg-hover);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);
@@ -29,6 +30,20 @@ html,
 body,
 #root {
   min-height: 100%;
+}
+
+/* Tailwind 4 resets buttons to the default cursor; everything clickable gets the hand. */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+[role='tab'],
+[role='menuitem'],
+summary,
+label:has(> input[type='checkbox']),
+label:has(> input[type='radio']) {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
 }
 
 body {

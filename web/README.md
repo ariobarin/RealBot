@@ -5,7 +5,7 @@ flow for the bracketbot, and a 3D map viewer. Vite + React + TypeScript, Tailwin
 Zustand. Design rules are in [`docs/TASTE.md`](docs/TASTE.md).
 
 Current state: the library contains two preset SLAM maps; **Add a space** opens the `/onboard`
-flow (4 instruction steps, simulated 2 s pairing → Start); `/map/:id` renders the selected grid
+flow (three steps with simulated 2 s pairing → Start scan → a simulated Scanning state); `/map/:id` renders the selected grid
 in 2D/3D and supports local mock waypoint markers. Realtor sign-in uses Supabase Auth and requires
 an organization membership row. Visitor room entry, pairing, robot state, and commands remain
 hackathon-oriented or simulated rather than using the planned invitation/session boundary.
@@ -58,11 +58,15 @@ cd relay
 uv run python simulator.py
 ```
 
-Then run `web/` and open `/`. The login portal currently offers two paths:
+Then run `web/` and open `/`. The app has two tabs:
 
-- **Visitor**: enter a tour access code (the relay room ID) to open `/user/:roomId`.
-- **Realtor**: create or sign in to a verified Supabase account. Account creation also creates an
-  organization and owner membership before entering the operator dashboard.
+- **Tours** (`/`): the public entry. Enter a tour access code (the relay room ID) to open
+  `/user/:roomId`, or pick an open tour from the grid (a static list for now). Scheduled tours
+  open a booking sheet; bookings are kept on the device and listed under **Your bookings**
+  (`/bookings`), which a signed-in realtor sees from the other side. No account is needed.
+- **Manage spaces** (`/realtor`): the realtor side, behind `/signin` — create or sign in to a
+  verified Supabase account. Account creation also creates an organization and owner membership.
+  From there open the operator dashboard with room, transport, pose, and command diagnostics.
 
 Supabase setup, migrations, and first-owner account creation are documented in
 [`../supabase/README.md`](../supabase/README.md). Playwright uses an explicit test-only auth mode;

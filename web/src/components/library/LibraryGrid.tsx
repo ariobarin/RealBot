@@ -14,10 +14,10 @@ export function LibraryGrid({ maps }: { maps: MapSummary[] }) {
       className="m-0 grid list-none gap-x-6 gap-y-10 p-0"
       style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))' }}
     >
-      <AddMapCard />
       {maps.map((m) => (
         <MapCard key={m.id} map={m} />
       ))}
+      <AddMapCard />
     </motion.ul>
   )
 }

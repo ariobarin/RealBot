@@ -1,0 +1,75 @@
+import { motion } from 'framer-motion'
+import type { ReactNode } from 'react'
+import { Link, NavLink } from 'react-router-dom'
+import { useAuth } from '../../auth/useAuth'
+import { spring } from '../../lib/motion'
+import { CalendarIcon } from '../icons/CalendarIcon'
+import { HouseIcon } from '../icons/HouseIcon'
+import { KeyRingIcon } from '../icons/KeyRingIcon'
+import { MapPinIcon } from '../icons/MapPinIcon'
+import { Wordmark } from '../brand/Logo'
+import { AccountMenu } from './AccountMenu'
+
+const tours = { to: '/', label: 'Tours', Icon: MapPinIcon, end: true }
+const bookings = { to: '/bookings', label: 'Your bookings', Icon: CalendarIcon, end: true }
+const manage = { to: '/realtor', label: 'Manage spaces', Icon: HouseIcon, end: false }
+
+/** The public two-tab header: Tours (everyone) and Manage spaces (realtors). */
+/** `actions` render to the left of the account pill on signed-in pages. */
+export function TopNav({ actions }: { actions?: ReactNode }) {
+  const { session } = useAuth()
+  // A visitor session is just the tour they joined, not an account: only realtors get the pill.
+  const realtor = session?.role === 'realtor'
+  const tabs = realtor ? [tours, bookings, manage] : [tours, bookings]
+  return (
+    <header className="flex h-[84px] items-center justify-between gap-6 border-b border-line px-6 sm:px-10">
+      <Wordmark />
+
+      <nav aria-label="Primary" className="flex items-end gap-6 self-stretch sm:gap-11">
+        {tabs.map(({ to, label, Icon, end }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={end}
+            className={({ isActive }) =>
+              `icon-hover lively relative flex items-center gap-2.5 self-stretch pt-3 text-[15px] no-underline transition-colors sm:text-base ${
+                isActive ? 'font-semibold text-ink' : 'font-medium text-ink-2 hover:text-ink'
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <Icon size={52} />
+                <span className="hidden sm:inline">{label}</span>
+                {isActive && (
+                  <motion.span
+                    layoutId="nav-underline"
+                    transition={spring}
+                    className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-ink"
+                  />
+                )}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="flex items-center gap-3">
+        {realtor ? (
+          <>
+            {actions}
+            <AccountMenu />
+          </>
+        ) : (
+          <Link
+            to="/signin"
+            className="icon-hover lively flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[15px] font-semibold text-ink no-underline transition-colors hover:bg-bg-soft"
+          >
+            <KeyRingIcon size={36} />
+            <span className="hidden sm:inline">Realtor sign in</span>
+          </Link>
+        )}
+      </div>
+    </header>
+  )
+}
