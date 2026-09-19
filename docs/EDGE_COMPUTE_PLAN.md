@@ -11,6 +11,11 @@ The post-SLAM realtor teaching workflow is specified separately in
 transports its high-level commands and authoritative state, while its robot-side
 orchestrator owns gesture, speech, safety, testing, and persistence.
 
+The minimal cross-cutting contracts required before moving-hardware MVP testing
+are defined in [`MVP_EDGE_GAP_PATCHES.md`](MVP_EDGE_GAP_PATCHES.md): exclusive
+motion ownership, disconnect failsafe, synchronized capture, test verification,
+and demo security.
+
 ```text
 Browser
    | control, state, navigation, video
