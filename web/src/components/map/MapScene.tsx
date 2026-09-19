@@ -71,13 +71,28 @@ const homePose = (m: GridMap) => {
   return { x, y, heading: 0 }
 }
 
-function Scene({ grid }: { grid: GridMap }) {
+interface RobotPose {
+  x: number
+  y: number
+  heading: number
+}
+
+function Scene({
+  grid,
+  onMoveTo,
+  robotPose,
+}: {
+  grid: GridMap
+  onMoveTo?: (x: number, y: number) => void
+  robotPose?: RobotPose
+}) {
   const controls = useRef<MapControlsImpl>(null)
   const mode = useViewStore((s) => s.mode)
   const waypoints = useViewStore((s) => s.waypoints)
   const addWaypoint = useViewStore((s) => s.addWaypoint)
   const frame = useMemo(() => frameGrid(grid), [grid])
-  const home = useMemo(() => homePose(grid), [grid])
+  const fallbackPose = useMemo(() => homePose(grid), [grid])
+  const pose = robotPose ?? fallbackPose
 
   const onPick = (e: ThreeEvent<MouseEvent>) => {
     if (e.delta > 4) return // it was a drag
@@ -85,7 +100,8 @@ function Scene({ grid }: { grid: GridMap }) {
     if (!cell || getCell(grid, cell[0], cell[1]) !== FLOOR) return
     const [x, y] = cellToWorld(grid, cell[0], cell[1])
     addWaypoint(x, y)
-    botClient.sendCommand({ type: 'add_wp', x: +x.toFixed(3), y: +y.toFixed(3) })
+    if (onMoveTo) onMoveTo(x, y)
+    else botClient.sendCommand({ type: 'add_wp', x: +x.toFixed(3), y: +y.toFixed(3) })
   }
 
   return (
@@ -120,7 +136,7 @@ function Scene({ grid }: { grid: GridMap }) {
         fadeStrength={1}
         followCamera={false}
       />
-      <RobotMarker x={home.x} y={home.y} heading={home.heading} />
+      <RobotMarker x={pose.x} y={pose.y} heading={pose.heading} />
       <Waypoints waypoints={waypoints} />
 
       <MapControls
@@ -139,7 +155,15 @@ function Scene({ grid }: { grid: GridMap }) {
   )
 }
 
-export function MapScene({ grid }: { grid: GridMap }) {
+export function MapScene({
+  grid,
+  onMoveTo,
+  robotPose,
+}: {
+  grid: GridMap
+  onMoveTo?: (x: number, y: number) => void
+  robotPose?: RobotPose
+}) {
   const frame = useMemo(() => frameGrid(grid), [grid])
   const start: [number, number, number] = [
     frame.center[0],
@@ -155,7 +179,7 @@ export function MapScene({ grid }: { grid: GridMap }) {
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       data-testid="map-canvas"
     >
-      <Scene grid={grid} />
+      <Scene grid={grid} onMoveTo={onMoveTo} robotPose={robotPose} />
     </Canvas>
   )
 }

@@ -24,6 +24,26 @@ npm run test:e2e     # playwright (first time: npx playwright install chromium)
 npm run build
 ```
 
+## Hackathon remote-control demo
+
+Run the lightweight relay and simulator in separate terminals:
+
+```sh
+cd relay
+uv sync
+uv run uvicorn app:app --reload --port 8000
+```
+
+```sh
+cd relay
+uv run python simulator.py
+```
+
+Then run `web/`, open `/connect`, and join room `demo-bot`. The control dashboard receives
+simulated robot state and JPEG camera frames and exercises acknowledged `move_to`, `stop`, and
+`use_action` commands. Set `VITE_RELAY_WS_URL` when the relay is not on port 8000 of the same
+host.
+
 ## Maps
 
 Every layout is a SLAM occupancy grid using the robot's `mapping.grid2d` encoding

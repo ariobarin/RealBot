@@ -1,5 +1,7 @@
 import { motion } from 'framer-motion'
+import { Radio } from 'lucide-react'
 import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { LibraryGrid, LibraryGridSkeleton } from '../components/library/LibraryGrid'
 import { Button } from '../components/ui/Button'
 import { PageShell, Wordmark } from '../components/ui/PageShell'
@@ -7,6 +9,7 @@ import { fadeUp } from '../lib/motion'
 import { useMapsStore } from '../store/useMapsStore'
 
 export function LibraryPage() {
+  const navigate = useNavigate()
   const { status, maps, error, load } = useMapsStore()
   useEffect(() => {
     void load()
@@ -16,7 +19,9 @@ export function LibraryPage() {
     <PageShell wide>
       <header className="flex items-center justify-between">
         <Wordmark />
-        <span className="text-sm text-ink-2">Realtor</span>
+        <Button variant="secondary" onClick={() => void navigate('/connect')}>
+          <Radio size={16} /> Connect to bot
+        </Button>
       </header>
 
       <motion.section variants={fadeUp} initial="hidden" animate="show" className="mt-12 mb-8">
