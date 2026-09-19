@@ -6,6 +6,7 @@ import { OnboardingPage } from './pages/OnboardingPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { RealtorSignInPage } from './pages/RealtorSignInPage'
 import { ToursPage } from './pages/ToursPage'
+import { BookingsPage } from './pages/BookingsPage'
 import { useAuth } from './auth/useAuth'
 
 /** three.js only ships when a map is opened. */
@@ -26,6 +27,7 @@ export default function App() {
       <Routes location={location} key={location.pathname}>
         <Route path="/" element={<ToursPage />} />
         <Route path="/signin" element={<RealtorSignInPage />} />
+        <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/connect" element={<Navigate to="/" replace />} />
         <Route path="/realtor/connect" element={<Navigate to="/signin" replace />} />
         <Route

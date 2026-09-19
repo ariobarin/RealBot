@@ -57,7 +57,9 @@ uv run python simulator.py
 Then run `web/` and open `/`. The app has two tabs:
 
 - **Tours** (`/`): the public entry. Enter a tour access code (the relay room ID) to open
-  `/user/:roomId`, or pick an open tour from the grid (a static list for now).
+  `/user/:roomId`, or pick an open tour from the grid (a static list for now). Scheduled tours
+  open a booking sheet; bookings are kept on the device and listed under **Your bookings**
+  (`/bookings`), which a signed-in realtor sees from the other side.
 - **Manage spaces** (`/realtor`): the realtor side, behind `/signin` — use
   `realtor@realbot.demo` / `demo`. From there open the operator dashboard with room, transport,
   pose, and command diagnostics.

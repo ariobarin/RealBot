@@ -3,21 +3,22 @@ import type { ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
 import { spring } from '../../lib/motion'
+import { CalendarIcon } from '../icons/CalendarIcon'
 import { HouseIcon } from '../icons/HouseIcon'
 import { KeyRingIcon } from '../icons/KeyRingIcon'
 import { MapPinIcon } from '../icons/MapPinIcon'
 import { Wordmark } from '../brand/Logo'
 import { AccountMenu } from './AccountMenu'
 
-const tabs = [
-  { to: '/', label: 'Tours', Icon: MapPinIcon, end: true },
-  { to: '/realtor', label: 'Manage spaces', Icon: HouseIcon, end: false },
-]
+const tours = { to: '/', label: 'Tours', Icon: MapPinIcon, end: true }
+const bookings = { to: '/bookings', label: 'Your bookings', Icon: CalendarIcon, end: true }
+const manage = { to: '/realtor', label: 'Manage spaces', Icon: HouseIcon, end: false }
 
 /** The public two-tab header: Tours (everyone) and Manage spaces (realtors). */
 /** `actions` render to the left of the account pill on signed-in pages. */
 export function TopNav({ actions }: { actions?: ReactNode }) {
   const { session } = useAuth()
+  const tabs = session?.role === 'realtor' ? [tours, bookings, manage] : [tours, bookings]
   return (
     <header className="flex h-[84px] items-center justify-between gap-6 border-b border-line px-6 sm:px-10">
       <Wordmark />

@@ -1,8 +1,9 @@
 import { ArrowRight, ChevronRight } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { useState, type FormEvent } from 'react'
+import { useCallback, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
+import { BookingSheet } from '../components/tours/BookingSheet'
 import { OpenTourCard } from '../components/tours/OpenTourCard'
 import { WordCarousel } from '../components/tours/WordCarousel'
 import { Button } from '../components/ui/Button'
@@ -27,6 +28,8 @@ export function ToursPage() {
   const navigate = useNavigate()
   const [code, setCode] = useState(() => localStorage.getItem('realbot-room') || 'demo-bot')
   const [filter, setFilter] = useState<Filter>('live')
+  const [booking, setBooking] = useState<OpenTour | null>(null)
+  const closeBooking = useCallback(() => setBooking(null), [])
 
   const join = (roomId: string) => {
     loginVisitor(roomId)
@@ -41,7 +44,7 @@ export function ToursPage() {
 
   const openTour = (tour: OpenTour) => {
     if (tour.live) join(tour.roomId)
-    // Scheduled tours: reservations are not wired yet; nothing happens on click.
+    else setBooking(tour)
   }
 
   const tours = OPEN_TOURS.filter((t) => (filter === 'live' ? t.live : true))
@@ -141,6 +144,8 @@ export function ToursPage() {
           ))}
         </motion.ul>
       </section>
+
+      <BookingSheet tour={booking} onClose={closeBooking} />
     </motion.main>
   )
 }

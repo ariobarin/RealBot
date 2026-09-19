@@ -41,6 +41,7 @@ export function AccountMenu() {
       ? [
           [
             { label: 'Manage spaces', to: '/realtor', strong: true },
+            { label: 'Your bookings', to: '/bookings' },
             { label: 'Add a space', to: '/onboard' },
             {
               label: 'Open robot dashboard',

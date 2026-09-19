@@ -270,3 +270,37 @@
     transform: scale(1.25);
   }
 }
+
+/* calendar */
+.ic-rings {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: ic-sway 4s ease-in-out infinite;
+}
+.ic-today {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ic-today 3s ease-in-out infinite;
+}
+.icon-hover:hover .ic-today {
+  animation: ic-todaypop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ic-tick {
+  stroke-dasharray: 12;
+}
+.icon-hover:hover .ic-tick {
+  animation: ic-tickdraw 0.6s ease-out;
+}
+@keyframes ic-today {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+@keyframes ic-todaypop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.5) rotate(-6deg); }
+  100% { transform: scale(1); }
+}
+@keyframes ic-tickdraw {
+  from { stroke-dashoffset: 12; }
+  to { stroke-dashoffset: 0; }
+}
