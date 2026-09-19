@@ -1,0 +1,27 @@
+{
+  "_comment": "EXAMPLE of what training should emit next to pretrained_model. Machine-generated; do not hand-edit. Extra fields (episodes, dataset medians, ...) pass through untouched on Task.extra.",
+  "checkpoint": "pi0_b128_093_bowls_all_v2_20260727_010121",
+  "policy_type": "pi0",
+  "tasks": [
+    {
+      "task_index": 0,
+      "prompt": "Grab the bowl with the left hand, pass it to the right hand and leave it on the table",
+      "datasets": ["093-pickout-bowls"]
+    },
+    {
+      "task_index": 1,
+      "prompt": "Pick up the bowl with the left hand and place it in the toupe box",
+      "datasets": ["093-bowls-dagger-1"]
+    },
+    {
+      "task_index": 2,
+      "prompt": "Pick up the bowl with the right hand, pass it to the left hand and place it in the toupe box",
+      "datasets": ["093-bowls", "093-bowls-dagger"]
+    },
+    {
+      "task_index": 3,
+      "prompt": "Pick up the inverted bowl, turn it around with the right hand, pass it to the left hand and place it in the toupe box",
+      "datasets": ["093-bowls-dagger-3"]
+    }
+  ]
+}
