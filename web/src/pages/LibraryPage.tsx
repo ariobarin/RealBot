@@ -24,28 +24,25 @@ export function LibraryPage() {
 
   return (
     <motion.main variants={pageVariants} initial="initial" animate="enter" exit="exit" className="min-h-dvh">
-      <TopNav
-        actions={
-          <>
+      <TopNav />
+
+      <div className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 sm:px-10">
+        <motion.div
+          variants={fadeUp}
+          initial="hidden"
+          animate="show"
+          className="flex flex-wrap items-center justify-between gap-4"
+        >
+          <h1 className="text-[32px] font-extrabold tracking-[-0.03em] sm:text-[36px]">Your spaces</h1>
+          <div className="flex gap-2">
             <Button variant="ghost" onClick={() => void navigate(`/user/${encodeURIComponent(room)}`)}>
               <Eye size={16} /> Preview as user
             </Button>
             <Button onClick={() => void navigate('/onboard')}>
               <Plus size={16} strokeWidth={2.4} /> Add a space
             </Button>
-          </>
-        }
-      />
-
-      <div className="mx-auto max-w-[1280px] px-6 pb-20 pt-10 sm:px-10">
-        <motion.h1
-          variants={fadeUp}
-          initial="hidden"
-          animate="show"
-          className="text-[32px] font-extrabold tracking-[-0.03em] sm:text-[36px]"
-        >
-          Your spaces
-        </motion.h1>
+          </div>
+        </motion.div>
 
         <div className="mt-7">
           {status === 'ready' && <LibraryGrid maps={maps} />}
