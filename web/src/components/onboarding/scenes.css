@@ -1,4 +1,5 @@
-/* Add-a-space scenes — see docs/TASTE.md §5. Each scene is one 560×420 stage. */
+/* Add-a-space scenes — see docs/TASTE.md §7. Each scene is one 560×420 stage.
+   Generated from the design plan's scenes_src.py: edit there, then regenerate. */
 .scene {
   position: relative;
   overflow: hidden;
@@ -11,66 +12,230 @@
   height: 100%;
 }
 
+/* shared */
+.sc-ground {
+  fill: #ece8e0;
+}
 /* power on */
-.sc-ring {
+.sc-finger {
+  transform-origin: 280px 100px;
+  transform: rotate(28deg);
+}
+.sc-finger-press {
+  animation: sc-press 3.2s ease-in-out infinite;
+}
+@keyframes sc-press {
+  0%,
+  8% {
+    transform: translateY(-12px);
+  }
+  16%,
+  70% {
+    transform: translateY(0);
+  }
+  80%,
+  100% {
+    transform: translateY(-12px);
+  }
+}
+.sc-holdarc {
+  stroke-dasharray: 126;
+  stroke-dashoffset: 126;
+  animation: sc-holdarc 3.2s linear infinite;
+}
+@keyframes sc-holdarc {
+  0%,
+  16% {
+    stroke-dashoffset: 126;
+    opacity: 1;
+  }
+  70% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  78%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+.sc-glow {
   transform-box: fill-box;
   transform-origin: center;
-  animation: sc-ring 2.4s ease-in-out infinite;
+  animation: sc-glow 3.2s ease-in-out infinite;
 }
-.sc-hold {
-  animation: sc-hold 2.4s ease-in-out infinite;
+@keyframes sc-glow {
+  0%,
+  16% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  34% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.15;
+    transform: scale(0.92);
+  }
+  66% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  82%,
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
 }
-.sc-dot {
-  animation: sc-dot 1.4s ease-in-out infinite;
+.sc-lit {
+  animation: sc-lit 3.2s steps(1) infinite;
 }
-.sc-dot:nth-child(2) {
-  animation-delay: 0.2s;
+@keyframes sc-lit {
+  0%,
+  16% {
+    opacity: 0;
+  }
+  34%,
+  80% {
+    opacity: 1;
+  }
+  82%,
+  100% {
+    opacity: 0;
+  }
 }
-.sc-dot:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
 /* place it */
 .sc-door {
-  transform-origin: 250px 330px;
-  animation: sc-door 4.5s ease-in-out infinite;
+  transform-origin: 236px 214px;
+  animation: sc-door 5s ease-in-out infinite;
+}
+@keyframes sc-door {
+  0%,
+  6% {
+    transform: rotate(0);
+  }
+  22%,
+  100% {
+    transform: rotate(-112deg);
+  }
 }
 .sc-home {
   transform-box: fill-box;
   transform-origin: center;
   animation: sc-home 2.2s ease-out infinite;
 }
+@keyframes sc-home {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
 .sc-roll {
-  animation: sc-roll 4.5s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+  animation: sc-roll 5s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+@keyframes sc-roll {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  26% {
+    transform: translateY(0);
+  }
+  64% {
+    transform: translateY(-158px);
+  }
+  92% {
+    transform: translateY(-158px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-158px);
+    opacity: 0;
+  }
 }
 .sc-roll .ic-wheel {
-  animation: ic-spin 1.2s linear infinite;
+  animation: ic-spin 1.1s linear infinite;
 }
-
 /* pair */
-.sc-wave {
+.sc-pw {
   opacity: 0;
   transform-box: fill-box;
   transform-origin: left center;
-  animation: sc-wave 2.4s ease-out infinite;
+  animation: sc-wave 3s ease-out infinite;
 }
-.sc-wave:nth-of-type(2) {
-  animation-delay: 0.4s;
+.sc-pw2 {
+  animation-delay: 0.35s;
 }
-.sc-wave:nth-of-type(3) {
-  animation-delay: 0.8s;
+.sc-pw3 {
+  animation-delay: 0.7s;
+}
+.sc-bw {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: right center;
+  animation: sc-wave 3s ease-out infinite;
+  animation-delay: 1.3s;
+}
+.sc-bw2 {
+  animation-delay: 1.65s;
+}
+.sc-bw3 {
+  animation-delay: 2s;
+}
+@keyframes sc-wave {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  25% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+}
+.sc-scanring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sc-scanring 1.6s ease-out infinite;
+}
+@keyframes sc-scanring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
 }
 .sc-found {
   transform-box: fill-box;
   transform-origin: center;
-  animation: sc-found 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-}
-.sc-found--late {
-  animation-delay: 0.15s;
+  transition:
+    transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.3s;
 }
 .sc-searching .sc-found {
-  animation: none;
+  transform: scale(0);
   opacity: 0;
+}
+.sc-searching .sc-found-hide {
+  opacity: 1;
+}
+.sc-found-hide {
+  opacity: 0;
+  transition: opacity 0.3s;
 }
 
 /* explore: the walls draw in behind the bot as it walks the plan */
@@ -114,111 +279,6 @@
 .sc-chip:nth-child(4) {
   animation-delay: 6.6s;
 }
-
-@keyframes sc-ring {
-  0%,
-  100% {
-    opacity: 0.25;
-    transform: scale(0.92);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.06);
-  }
-}
-@keyframes sc-hold {
-  0%,
-  20% {
-    transform: translateY(0);
-  }
-  30%,
-  80% {
-    transform: translateY(4px);
-  }
-  90%,
-  100% {
-    transform: translateY(0);
-  }
-}
-@keyframes sc-dot {
-  0%,
-  80%,
-  100% {
-    opacity: 0.25;
-  }
-  40% {
-    opacity: 1;
-  }
-}
-@keyframes sc-door {
-  0%,
-  8% {
-    transform: rotate(0);
-  }
-  22%,
-  100% {
-    transform: rotate(-70deg);
-  }
-}
-@keyframes sc-home {
-  0% {
-    transform: scale(0.7);
-    opacity: 0.8;
-  }
-  100% {
-    transform: scale(1.5);
-    opacity: 0;
-  }
-}
-@keyframes sc-roll {
-  0% {
-    transform: translateY(0);
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-  }
-  55% {
-    transform: translateY(-118px);
-  }
-  85% {
-    transform: translateY(-118px);
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(-118px);
-    opacity: 0;
-  }
-}
-@keyframes sc-wave {
-  0% {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-  30% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.15);
-  }
-}
-@keyframes sc-found {
-  0%,
-  50% {
-    transform: scale(0);
-    opacity: 0;
-  }
-  62% {
-    transform: scale(1.15);
-    opacity: 1;
-  }
-  70%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
 @keyframes sc-walls {
   0% {
     stroke-dashoffset: 1400;
@@ -258,39 +318,48 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sc-ring,
-  .sc-hold,
-  .sc-dot,
+  .sc-finger-press,
+  .sc-holdarc,
+  .sc-glow,
+  .sc-lit,
   .sc-door,
   .sc-home,
   .sc-roll,
   .sc-roll .ic-wheel,
-  .sc-wave,
+  .sc-pw,
+  .sc-bw,
+  .sc-scanring,
   .sc-walls,
   .sc-trail,
   .sc-rover,
-  .sc-cone {
-    animation: none;
-  }
-  .sc-wave {
-    opacity: 0.6;
-  }
-  .sc-found {
-    animation: none;
-    opacity: 1;
-  }
+  .sc-cone,
   .sc-chip {
     animation: none;
+  }
+  .sc-glow {
+    opacity: 0.4;
+  }
+  .sc-lit {
+    opacity: 1;
+  }
+  .sc-holdarc {
+    stroke-dashoffset: 0;
+  }
+  .sc-door {
+    transform: rotate(-112deg);
+  }
+  .sc-roll {
+    transform: translateY(-158px);
+    opacity: 1;
+  }
+  .sc-pw,
+  .sc-bw {
+    opacity: 0.6;
+  }
+  .sc-chip {
     opacity: 1;
   }
   .sc-walls {
     stroke-dashoffset: 0;
-  }
-  .sc-door {
-    transform: rotate(-70deg);
-  }
-  .sc-roll {
-    transform: translateY(-118px);
-    opacity: 1;
   }
 }

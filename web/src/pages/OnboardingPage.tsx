@@ -182,9 +182,7 @@ export function OnboardingPage() {
                 n={3}
                 title="Pair from this device"
                 body="Stay on this page. We find the bot on the local network and pair on our own."
-                scene={
-                  <PairScene className="h-full" found={paired} name={paired ? DEMO_BOT_NAME : undefined} />
-                }
+                scene={<PairScene className="h-full" found={paired} />}
                 status={
                   <span data-testid="pairing" data-phase={phase}>
                     {paired ? (
