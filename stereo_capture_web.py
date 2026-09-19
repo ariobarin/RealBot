@@ -12,7 +12,8 @@
 # ///
 """Stereo calibration capture over a web UI (head cam only).
 
-The app runs on the robot but the images are saved on YOUR machine.
+Each pair is saved under ~/calibration_captures/<timestamp>/ on the robot
+before the browser downloads it to your machine.
 
     # on the robot: uv run stereo_capture_web.py
     # on your mac:  open http://<robot>.local:8005/
@@ -25,15 +26,17 @@ tunnel with `ssh -L 8005:localhost:8005 bracketbot@<robot>.local` and open
 http://localhost:8005/ instead.
 
 Press Enter per capture. Each capture splits the head
-stereo frame in half and writes both eyes as uncompressed PNGs named
+stereo frame in half and writes both eyes as lossless PNGs named
 camera0_image-<timestamp>.png (left) and camera1_image-<timestamp>.png.
 """
 import asyncio
 import socket
+import tempfile
 import threading
 import time
 from collections import OrderedDict
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -49,6 +52,7 @@ from bbos import Reader
 PREVIEW_FPS = 12
 PREVIEW_DECODE = cv2.IMREAD_REDUCED_COLOR_4  # 2560x960 -> 640x240
 PREVIEW_QUALITY = 70
+CAPTURE_DIR = Path.home() / "calibration_captures"
 
 latest = {"jpeg": b"", "preview": b"", "seq": 0}
 shots = OrderedDict()  # ts -> (left_png, right_png), most recent last
@@ -108,14 +112,24 @@ def capture(req: Req):
 
     png = [cv2.IMWRITE_PNG_COMPRESSION, 1]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    shots[ts] = tuple(cv2.imencode(".png", eye, png)[1].tobytes()
-                      for eye in (left, right))
+    images = tuple(cv2.imencode(".png", eye, png)[1].tobytes()
+                   for eye in (left, right))
+    names = [f"camera0_image-{ts}.png", f"camera1_image-{ts}.png"]
+    try:
+        CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=CAPTURE_DIR, prefix=".capture-") as tmp:
+            for name, image in zip(names, images):
+                (Path(tmp) / name).write_bytes(image)
+            Path(tmp).rename(CAPTURE_DIR / ts)
+    except OSError as err:
+        return {"error": f"could not save capture on robot: {err}"}
+    shots[ts] = images
     while len(shots) > 4:
         shots.popitem(last=False)
 
     h, w = left.shape[:2]
     return {"ts": ts, "size": f"{w}x{h}",
-            "names": [f"camera0_image-{ts}.png", f"camera1_image-{ts}.png"]}
+            "names": names, "saved_to": str(CAPTURE_DIR / ts)}
 
 @app.get("/shot/{ts}/{idx}")
 def shot(ts: str, idx: int):
@@ -209,6 +223,7 @@ async def index():
               body: JSON.stringify({swap: document.getElementById('swap').checked})});
             const j = await r.json();
             if (j.error) { log(j.error); return; }
+            log(`saved on robot: ${j.saved_to}`);
             for (let i = 0; i < 2; i++) {
               const blob = await (await fetch(`/shot/${j.ts}/${i}`)).blob();
               await save(j.names[i], blob);
