@@ -54,11 +54,13 @@ cd relay
 uv run python simulator.py
 ```
 
-Then run `web/` and open `/`. The login portal offers two role-aware paths:
+Then run `web/` and open `/`. The app has two tabs:
 
-- **Visitor**: enter a tour access code (the relay room ID) to open `/user/:roomId`.
-- **Realtor**: use `realtor@realbot.demo` / `demo` to open `/realtor`, then enter the operator
-  dashboard with room, transport, pose, and command diagnostics.
+- **Tours** (`/`): the public entry. Enter a tour access code (the relay room ID) to open
+  `/user/:roomId`, or pick an open tour from the grid (a static list for now).
+- **Manage spaces** (`/realtor`): the realtor side, behind `/signin` — use
+  `realtor@realbot.demo` / `demo`. From there open the operator dashboard with room, transport,
+  pose, and command diagnostics.
 
 The credentials can be changed with `VITE_REALTOR_EMAIL` and `VITE_REALTOR_PASSWORD`. This is
 deliberately lightweight client-side access control for the hackathon prototype, not production

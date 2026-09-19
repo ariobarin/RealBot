@@ -1,0 +1,252 @@
+/* RealBot hero icons — see docs/TASTE.md §5.
+   Each icon has a quiet idle loop; the bigger move fires when a `.icon-hover` ancestor is hovered. */
+
+.hero-icon {
+  display: block;
+  flex-shrink: 0;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.icon-hover:hover .hero-icon {
+  transform: translateY(-4px);
+}
+
+/* house */
+.ic-tree {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: ic-sway 4.5s ease-in-out infinite;
+}
+.ic-door {
+  transform-origin: 41px 67px;
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.icon-hover:hover .ic-door {
+  transform: scaleX(0.22);
+}
+.ic-smoke {
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.icon-hover:hover .ic-smoke {
+  opacity: 1;
+  animation: ic-smoke 1.6s ease-out infinite;
+}
+
+/* map + pin */
+.ic-pin {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: ic-pinbob 3s ease-in-out infinite;
+}
+.icon-hover:hover .ic-pin {
+  animation: ic-pinjump 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ic-pinshadow {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ic-pinshadow 3s ease-in-out infinite;
+}
+.ic-route {
+  stroke-dasharray: 4 4;
+  animation: ic-routeflow 1.6s linear infinite;
+}
+
+/* robot */
+.ic-lens {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ic-blink 4.6s steps(1) infinite;
+}
+.ic-bead {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ic-bead 2.4s ease-in-out infinite;
+}
+.ic-wheel {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.icon-hover:hover .ic-wheel {
+  animation: ic-spin 1.1s linear infinite;
+}
+.ic-body {
+  transform-origin: 48px 76px;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.icon-hover:hover .ic-body {
+  transform: rotate(-7deg) translateX(3px);
+}
+
+/* key ring */
+.ic-hang {
+  transform-origin: 48px 18px;
+  animation: ic-pend 3.6s ease-in-out infinite;
+}
+.icon-hover:hover .ic-hang {
+  animation: ic-pendbig 1.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ic-tag {
+  transform-origin: 64px 30px;
+  animation: ic-tag 3.6s ease-in-out infinite;
+}
+.icon-hover:hover .ic-tag {
+  animation: ic-tagbig 1.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes ic-sway {
+  0%,
+  100% {
+    transform: rotate(-2.5deg);
+  }
+  50% {
+    transform: rotate(2.5deg);
+  }
+}
+@keyframes ic-smoke {
+  0% {
+    transform: translate(0, 0) scale(0.6);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(4px, -14px) scale(1.3);
+    opacity: 0;
+  }
+}
+@keyframes ic-pinbob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+@keyframes ic-pinjump {
+  0% {
+    transform: translateY(0) scale(1, 1);
+  }
+  30% {
+    transform: translateY(-16px) scale(0.94, 1.08);
+  }
+  60% {
+    transform: translateY(0) scale(1.08, 0.92);
+  }
+  80% {
+    transform: translateY(-3px) scale(1, 1);
+  }
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+}
+@keyframes ic-pinshadow {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.18;
+  }
+  50% {
+    transform: scale(0.8);
+    opacity: 0.1;
+  }
+}
+@keyframes ic-routeflow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+@keyframes ic-blink {
+  0%,
+  91%,
+  100% {
+    transform: scaleY(1);
+  }
+  93% {
+    transform: scaleY(0.08);
+  }
+}
+@keyframes ic-bead {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+}
+@keyframes ic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ic-pend {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+@keyframes ic-pendbig {
+  0% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(-22deg);
+  }
+  55% {
+    transform: rotate(14deg);
+  }
+  80% {
+    transform: rotate(-6deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes ic-tag {
+  0%,
+  100% {
+    transform: rotate(5deg);
+  }
+  50% {
+    transform: rotate(-5deg);
+  }
+}
+@keyframes ic-tagbig {
+  0% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(26deg);
+  }
+  55% {
+    transform: rotate(-16deg);
+  }
+  80% {
+    transform: rotate(6deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ic-tree,
+  .ic-pin,
+  .ic-pinshadow,
+  .ic-route,
+  .ic-lens,
+  .ic-bead,
+  .ic-hang,
+  .ic-tag,
+  .icon-hover:hover .ic-pin,
+  .icon-hover:hover .ic-wheel,
+  .icon-hover:hover .ic-hang,
+  .icon-hover:hover .ic-tag,
+  .icon-hover:hover .ic-smoke {
+    animation: none;
+  }
+}

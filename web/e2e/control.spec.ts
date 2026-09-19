@@ -55,8 +55,8 @@ async function installRobotSocket(page: import('@playwright/test').Page, acquire
 
 test('visitor portal opens a tour and keeps realtor pages inaccessible', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Choose how you’re joining' })).toBeVisible()
-  await page.getByLabel('Tour access code').fill('hack-room')
+  await expect(page.getByRole('heading', { name: 'Have an access code?' })).toBeVisible()
+  await page.getByLabel('Access code').fill('hack-room')
   await page.getByRole('button', { name: 'Join tour' }).click()
   await expect(page).toHaveURL('/user/hack-room')
   await expect(page.getByRole('heading', { name: 'Control your bracketbot' })).toBeVisible()
@@ -80,11 +80,10 @@ test('visitor portal opens a tour and keeps realtor pages inaccessible', async (
 })
 
 test('realtor dashboard can enter the exact user view', async ({ page }) => {
-  await page.goto('/')
-  await page.getByRole('tab', { name: 'Realtor' }).click()
+  await page.goto('/signin')
   await page.getByLabel('Email').fill('realtor@realbot.demo')
   await page.getByLabel('Password').fill('demo')
-  await page.getByRole('button', { name: 'Open realtor portal' }).click()
+  await page.getByRole('button', { name: 'Open Manage spaces' }).click()
   await expect(page).toHaveURL('/realtor')
 
   await page.evaluate(() => localStorage.setItem('realbot-room', 'listing-room'))
@@ -107,12 +106,11 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
 })
 
 test('invalid realtor credentials stay on the portal', async ({ page }) => {
-  await page.goto('/')
-  await page.getByRole('tab', { name: 'Realtor' }).click()
+  await page.goto('/signin')
   await page.getByLabel('Password').fill('wrong')
-  await page.getByRole('button', { name: 'Open realtor portal' }).click()
+  await page.getByRole('button', { name: 'Open Manage spaces' }).click()
   await expect(page.getByRole('alert')).toContainText('does not match')
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/signin')
 })
 
 test('visitor can run a bounded left-hand free-cam session', async ({ page }) => {

@@ -32,8 +32,8 @@ grey-on-grey below 4.5:1. Brand is for _action_, not decoration.
 
 ## 2. Type
 
-Inter (Airbnb Cereal is proprietary; Inter with `-0.01em` tracking is the closest free fit).
-Loaded from rsms.me; falls back to system-ui.
+Figtree (Airbnb Cereal is proprietary; Figtree at 700–800 with `-0.035em` tracking on titles is
+the closest free fit). Loaded from Google Fonts; falls back to system-ui.
 
 | Role          | Size / weight                          |
 | ------------- | -------------------------------------- |
@@ -99,3 +99,22 @@ Catalogue of shared pieces
 Lighthouse a11y ≥ 95. Every image has an alt that says what it _is_ ("SLAM floor plan of Small
 House"). Every icon-only control has `aria-label`. Colour is never the only status signal (pills
 carry text). Keyboard order follows visual order.
+
+## 5. Icons
+
+The personality lives in the icons (`src/components/icons/`), the way Airbnb's nav does it: the
+page is still, the icons are alive. Every hero icon is a small object on a 96-unit grid with a
+front face and a darker side face, one light source top-left, a contact shadow underneath, and
+exactly one `--brand` part. Each has a **quiet idle loop** (≤ 3 px of travel) and **one bigger
+move on hover**, triggered by an `.icon-hover` ancestor:
+
+| Icon          | Idle                        | Hover                            | Where                          |
+| ------------- | --------------------------- | -------------------------------- | ------------------------------ |
+| `HouseIcon`   | tree sways                  | door swings open, chimney smokes | Manage spaces tab, empty state |
+| `MapPinIcon`  | pin hovers, route flows     | pin jumps, lands with a squash   | Tours tab                      |
+| `RobotIcon`   | lens blinks, antenna pulses | wheels spin, body leans forward  | Go live, pairing, status       |
+| `KeyRingIcon` | hangs and swings            | big swing, tag jingles           | Realtor sign in                |
+
+Small UI glyphs (arrows, chevrons, close) stay lucide. The Tours hero also has the one large
+motion on that page: `WordCarousel`, a three-row picker wheel of place types (1.6 s hold, 0.5 s
+move, six tints). Nothing else on the page should compete with it.
