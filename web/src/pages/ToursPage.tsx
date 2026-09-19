@@ -52,15 +52,15 @@ export function ToursPage() {
 
       <section className="mx-auto flex max-w-[1280px] flex-col items-center gap-10 px-6 pb-10 pt-10 sm:px-10 lg:flex-row lg:gap-16 lg:pt-14">
         <div className="flex flex-1 flex-col gap-5">
-          <h1 className="text-[44px] font-extrabold leading-[1.1] tracking-[-0.035em] sm:text-[64px] sm:leading-[72px]">
+          <h1 className="text-[38px] font-bold leading-[1.1] tracking-[-0.03em] sm:text-[52px] sm:leading-[60px]">
             <span className="flex items-center gap-3 sm:gap-4">
               Tour
-              <WordCarousel fontSize={44} className="sm:hidden" />
-              <WordCarousel fontSize={64} className="hidden sm:inline-block" />
+              <WordCarousel fontSize={38} className="sm:hidden" />
+              <WordCarousel fontSize={52} className="hidden sm:inline-block" />
             </span>
             <span className="block">from anywhere, anytime.</span>
           </h1>
-          <p className="max-w-[520px] text-lg leading-relaxed text-ink-2 sm:text-[19px]">
+          <p className="max-w-[480px] text-[17px] leading-relaxed text-ink-2">
             A robot on site, your screen as the window. Walk any listing live, or join the private tour your
             realtor set up for you.
           </p>

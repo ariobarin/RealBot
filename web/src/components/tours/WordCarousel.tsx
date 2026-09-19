@@ -17,7 +17,7 @@ const WINDOW = 1
  */
 export function WordCarousel({
   words = PLACE_WORDS,
-  fontSize = 64,
+  fontSize = 52,
   className = '',
 }: {
   words?: string[]
