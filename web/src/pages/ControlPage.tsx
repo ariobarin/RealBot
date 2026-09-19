@@ -1,13 +1,16 @@
-import { ArrowLeft, Bot, CircleStop, Eye, LogOut, Radio, Sparkles, Video } from 'lucide-react'
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { ArrowLeft, Bot, Camera, CircleStop, Eye, LogOut, Radio, Sparkles, Video } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { MapScene } from '../components/map/MapScene'
+import { VisitorMiniMap } from '../components/control/VisitorMiniMap'
+import { FreeCamPanel, type FreeCamPhase } from '../components/control/FreeCamPanel'
 import { Button } from '../components/ui/Button'
 import { PageShell, Wordmark } from '../components/ui/PageShell'
 import {
   RemoteBotClient,
   type CommandUpdate,
   type ConnectionPhase,
+  type NavigationTelemetry,
   type RobotState,
 } from '../lib/remoteBotClient'
 import { useGridStore } from '../store/useGridStore'
@@ -32,6 +35,10 @@ interface ViewTarget {
   commandId: string
 }
 
+type FreeCamLifecycle = { commandId: string; kind: 'start' | 'stop' }
+
+const clamp = (value: number, minimum: number, maximum: number) => Math.min(Math.max(value, minimum), maximum)
+
 export function ControlPage({ view }: ControlPageProps) {
   const { roomId = 'demo-bot' } = useParams()
   const navigate = useNavigate()
@@ -43,18 +50,34 @@ export function ControlPage({ view }: ControlPageProps) {
   const [robot, setRobot] = useState<RobotState>()
   const [frameUrl, setFrameUrl] = useState<string>()
   const [commands, setCommands] = useState<CommandUpdate[]>([])
+  const [navigation, setNavigation] = useState<NavigationTelemetry>()
   const [viewTarget, setViewTarget] = useState<ViewTarget>()
+  const [freeCamOpen, setFreeCamOpen] = useState(false)
+  const [freeCamPhase, setFreeCamPhase] = useState<FreeCamPhase>('off')
+  const [freeCamPose, setFreeCamPose] = useState({ panDeg: 0, tiltDeg: 0 })
+  const [freeCamSessionId, setFreeCamSessionId] = useState<string>()
+  const freeCamLifecycle = useRef<FreeCamLifecycle | undefined>(undefined)
+  const freeCamSequence = useRef(0)
   const { status: gridStatus, grid, load } = useGridStore()
 
+  const mapId = navigation?.mapId || robot?.mapId || 'small-house'
+
   useEffect(() => {
-    if (isRealtor) void load('small-house')
-  }, [isRealtor, load])
+    void load(mapId)
+  }, [load, mapId])
 
   useEffect(() => {
     let currentFrame: string | undefined
     const unsubscribe = client.subscribe((event) => {
       if (event.type === 'connection') setPhase(event.phase)
+      if (event.type === 'presence' && !event.online) {
+        freeCamLifecycle.current = undefined
+        setFreeCamPhase('off')
+        setFreeCamOpen(false)
+        setFreeCamSessionId(undefined)
+      }
       if (event.type === 'state') setRobot(event.state)
+      if (event.type === 'navigation') setNavigation(event.navigation)
       if (event.type === 'video') {
         const next = URL.createObjectURL(event.frame)
         if (currentFrame) URL.revokeObjectURL(currentFrame)
@@ -62,6 +85,27 @@ export function ControlPage({ view }: ControlPageProps) {
         setFrameUrl(next)
       }
       if (event.type === 'command') {
+        const lifecycle = freeCamLifecycle.current
+        if (lifecycle?.commandId === event.update.commandId) {
+          const failed = ['failed', 'rejected', 'expired'].includes(event.update.status)
+          if (failed) {
+            freeCamLifecycle.current = undefined
+            if (lifecycle.kind === 'start') {
+              setFreeCamPhase('off')
+              setFreeCamSessionId(undefined)
+            } else {
+              setFreeCamPhase('active')
+            }
+          } else if (event.update.status === 'succeeded') {
+            freeCamLifecycle.current = undefined
+            if (lifecycle.kind === 'start') setFreeCamPhase('active')
+            else {
+              setFreeCamPhase('off')
+              setFreeCamOpen(false)
+              setFreeCamSessionId(undefined)
+            }
+          }
+        }
         setCommands((existing) => {
           const index = existing.findIndex((item) => item.commandId === event.update.commandId)
           const next = [...existing]
@@ -82,7 +126,7 @@ export function ControlPage({ view }: ControlPageProps) {
 
   const online = phase === 'online'
   const sendViewTarget = (event: MouseEvent<HTMLImageElement>) => {
-    if (!online || !frameUrl) return
+    if (!online || !frameUrl || freeCamPhase !== 'off') return
     const rect = event.currentTarget.getBoundingClientRect()
     const u = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
     const v = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1)
@@ -92,6 +136,50 @@ export function ControlPage({ view }: ControlPageProps) {
       coordinateSpace: 'normalized_camera',
     })
     setViewTarget({ u, v, commandId })
+  }
+
+  const startFreeCam = () => {
+    if (!online || freeCamPhase !== 'off') return
+    const sessionId = crypto.randomUUID()
+    freeCamSequence.current = 0
+    setFreeCamSessionId(sessionId)
+    setFreeCamPose({ panDeg: 0, tiltDeg: 0 })
+    setViewTarget(undefined)
+    setNavigation(undefined)
+    setFreeCamPhase('starting')
+    const commandId = client.sendCommand('free_cam_start', { sessionId })
+    freeCamLifecycle.current = { commandId, kind: 'start' }
+  }
+
+  const stopFreeCam = () => {
+    if (!freeCamSessionId || freeCamPhase === 'stopping') return
+    setFreeCamPhase('stopping')
+    const commandId = client.sendCommand('free_cam_stop', { sessionId: freeCamSessionId })
+    freeCamLifecycle.current = { commandId, kind: 'stop' }
+  }
+
+  const sendFreeCamPose = (panDeg: number, tiltDeg: number) => {
+    if (!freeCamSessionId || freeCamPhase !== 'active') return
+    const next = {
+      panDeg: clamp(panDeg, -60, 60),
+      tiltDeg: clamp(tiltDeg, -35, 45),
+    }
+    setFreeCamPose(next)
+    freeCamSequence.current += 1
+    client.sendCommand('free_cam_pose', {
+      sessionId: freeCamSessionId,
+      panDeg: next.panDeg,
+      tiltDeg: next.tiltDeg,
+      sequence: freeCamSequence.current,
+    })
+  }
+
+  const emergencyStop = () => {
+    client.sendCommand('stop')
+    freeCamLifecycle.current = undefined
+    setFreeCamPhase('off')
+    setFreeCamOpen(false)
+    setFreeCamSessionId(undefined)
   }
 
   const targetCommand = viewTarget
@@ -171,18 +259,26 @@ export function ControlPage({ view }: ControlPageProps) {
           {!isRealtor && <p className="mt-1 text-sm text-ink-2">Connected to {roomId}</p>}
         </div>
         <div className="flex gap-2">
+          {!isRealtor && (
+            <Button
+              variant="secondary"
+              disabled={!online || freeCamPhase === 'starting' || freeCamPhase === 'stopping'}
+              onClick={() => {
+                if (freeCamPhase === 'active') void stopFreeCam()
+                else setFreeCamOpen((open) => !open)
+              }}
+            >
+              <Camera size={17} /> {freeCamPhase === 'active' ? 'Exit free cam' : 'Free cam'}
+            </Button>
+          )}
           <Button
             variant="secondary"
-            disabled={!online}
+            disabled={!online || freeCamPhase !== 'off'}
             onClick={() => client.sendCommand('use_action', { name: 'demo_action' })}
           >
             <Sparkles size={17} /> Use action
           </Button>
-          <Button
-            className="bg-red-600 hover:bg-red-700"
-            disabled={!online}
-            onClick={() => client.sendCommand('stop')}
-          >
+          <Button className="bg-red-600 hover:bg-red-700" disabled={!online} onClick={emergencyStop}>
             <CircleStop size={18} /> Stop
           </Button>
         </div>
@@ -206,8 +302,12 @@ export function ControlPage({ view }: ControlPageProps) {
             {frameUrl ? (
               <img
                 src={frameUrl}
-                alt="Live camera from bracketbot"
-                className={`size-full object-cover ${online ? 'cursor-crosshair' : 'cursor-not-allowed'}`}
+                alt={
+                  freeCamPhase === 'active'
+                    ? 'Live left-hand camera from bracketbot'
+                    : 'Live camera from bracketbot'
+                }
+                className={`size-full object-cover ${online && freeCamPhase === 'off' ? 'cursor-crosshair' : 'cursor-default'}`}
                 onClick={sendViewTarget}
               />
             ) : (
@@ -218,8 +318,14 @@ export function ControlPage({ view }: ControlPageProps) {
             )}
             {frameUrl && (
               <div className="pointer-events-none absolute left-4 top-4 rounded-2xl bg-black/55 px-4 py-3 text-white backdrop-blur">
-                <p className="text-sm font-semibold">Click where you want to go</p>
-                <p className="mt-0.5 text-xs text-white/70">The robot will navigate toward that point.</p>
+                <p className="text-sm font-semibold">
+                  {freeCamPhase === 'active' ? 'Left-hand camera' : 'Click where you want to go'}
+                </p>
+                <p className="mt-0.5 text-xs text-white/70">
+                  {freeCamPhase === 'active'
+                    ? 'The mobile base is locked.'
+                    : 'The robot will navigate toward that point.'}
+                </p>
               </div>
             )}
             {viewTarget && (
@@ -227,6 +333,27 @@ export function ControlPage({ view }: ControlPageProps) {
                 className={`pointer-events-none absolute size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 shadow-lg ${targetCommand?.status === 'succeeded' ? 'border-green-400 bg-green-400/30' : 'animate-pulse border-white bg-brand/50'}`}
                 style={{ left: `${viewTarget.u * 100}%`, top: `${viewTarget.v * 100}%` }}
                 aria-hidden="true"
+              />
+            )}
+            {!isRealtor && (
+              <VisitorMiniMap
+                grid={gridStatus === 'ready' && grid?.id === mapId ? grid : undefined}
+                pose={robot?.pose}
+                navigation={navigation}
+              />
+            )}
+            {!isRealtor && (freeCamOpen || freeCamPhase !== 'off') && (
+              <FreeCamPanel
+                panDeg={freeCamPose.panDeg}
+                phase={freeCamPhase}
+                tiltDeg={freeCamPose.tiltDeg}
+                onClose={() => setFreeCamOpen(false)}
+                onExit={stopFreeCam}
+                onNudge={(panDelta, tiltDelta) =>
+                  sendFreeCamPose(freeCamPose.panDeg + panDelta, freeCamPose.tiltDeg + tiltDelta)
+                }
+                onRecenter={() => sendFreeCamPose(0, 0)}
+                onStart={startFreeCam}
               />
             )}
           </div>
@@ -278,9 +405,11 @@ export function ControlPage({ view }: ControlPageProps) {
         </section>
       ) : (
         <div className="mt-2 min-h-5 shrink-0 text-center text-sm text-ink-2" aria-live="polite">
-          {commands[0]
-            ? `${commands[0].action === 'move_to_view' ? 'Move' : commands[0].action?.replaceAll('_', ' ')} · ${commands[0].status}`
-            : 'Click a place in the camera feed to move there.'}
+          {freeCamPhase === 'active'
+            ? 'Left-hand free cam active · base locked'
+            : commands[0]
+              ? `${commands[0].action === 'move_to_view' ? 'Move' : commands[0].action?.replaceAll('_', ' ')} · ${commands[0].status}`
+              : 'Click a place in the camera feed to move there.'}
         </div>
       )}
     </PageShell>

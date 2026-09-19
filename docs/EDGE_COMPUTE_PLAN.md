@@ -32,6 +32,8 @@ The first working vertical slice must support:
 7. Command expiry and duplicate-command protection.
 8. Reconnection without replaying expired commands.
 9. A visitor minimap using the robot's authoritative pose and route.
+10. A Free Cam mode that locks the mobile base, safely moves the left arm, and streams its camera
+    until the visitor exits the mode.
 
 The hackathon version does not require durable storage, multiple controllers, production authentication, WebRTC, a database, or a general-purpose remote shell.
 
@@ -49,6 +51,7 @@ edge_agent/
 |-- navigation_telemetry.py
 |-- camera.py
 |-- projection.py
+|-- free_cam.py
 |-- actions.py
 |-- command_journal.py
 `-- tests/
@@ -113,6 +116,7 @@ class EdgeConfig:
     map_id: str
     nav_ws_url: str = "ws://127.0.0.1:8010/ws"
     camera_topic: str = "camera.head.jpeg"
+    left_hand_camera_topic: str = "camera.left.jpeg"
     video_fps: float = 7.0
     command_ttl_ms: int = 6_000
     journal_capacity: int = 256
@@ -131,6 +135,7 @@ ROOM_ID=demo-bot
 MAP_ID=small-house
 NAV_WS_URL=ws://127.0.0.1:8010/ws
 CAMERA_TOPIC=camera.head.jpeg
+LEFT_HAND_CAMERA_TOPIC=camera.left.jpeg
 VIDEO_FPS=7
 ```
 
@@ -161,12 +166,23 @@ Supported actions:
 - `move_to_view`
 - `stop`
 - `use_action`
+- `free_cam_start`
+- `free_cam_pose`
+- `free_cam_stop`
 
 ```python
 @dataclass(frozen=True)
 class Command:
     command_id: str
-    action: Literal["move_to", "move_to_view", "stop", "use_action"]
+    action: Literal[
+        "move_to",
+        "move_to_view",
+        "stop",
+        "use_action",
+        "free_cam_start",
+        "free_cam_pose",
+        "free_cam_stop",
+    ]
     created_at: int
     expires_at: int
     payload: dict[str, Any]
@@ -429,6 +445,10 @@ Completion requires more than successfully sending `start`. The edge watches loc
 
 bbOS already exposes encoded JPEG data through `Reader("camera.head.jpeg")`.
 
+It also exposes the left-hand camera through `camera.left.jpeg`. The edge owns the active
+video-source selection; the browser continues receiving frames through the same relay video socket
+regardless of whether the head or left-hand camera is active.
+
 ```python
 def camera_reader(
     topic: str,
@@ -512,6 +532,12 @@ async def dispatch_command(command: Command) -> None:
             await execute_stop(command)
         case "use_action":
             await execute_action(command)
+        case "free_cam_start":
+            await execute_free_cam_start(command)
+        case "free_cam_pose":
+            await execute_free_cam_pose(command)
+        case "free_cam_stop":
+            await execute_free_cam_stop(command)
 ```
 
 ```python
@@ -523,7 +549,98 @@ async def execute_action(command: Command) -> None: ...
 
 Stop must bypass the normal motion-command lock. It must immediately send the local navigation Stop command, cancel the edge task waiting for movement completion, mark the interrupted command appropriately, and acknowledge Stop. It must continue working even if video or the action subsystem has failed.
 
-## 15. Camera-click projection
+Stop also terminates an active Free Cam session, freezes or safely parks the controlled arm, and
+returns video to the head camera. It must not wait for the normal Free Cam command queue.
+
+## 15. Free Cam hand-camera mode
+
+Free Cam is an exclusive edge-owned control mode for the left hand. The browser sends bounded,
+absolute view targets; it never sends joint angles, velocities, torques, or IK results.
+
+### 15.1 Start and stop contracts
+
+```json
+{
+  "action": "free_cam_start",
+  "payload": {
+    "sessionId": "browser-generated-uuid"
+  }
+}
+```
+
+Starting the mode is one atomic edge operation:
+
+1. Stop local navigation and clear the active navigation goal/path.
+2. Confirm wheel velocity is zero and hold the mobile base stopped.
+3. Reject the request if another behavior owns the left arm or if the left arm is unhealthy.
+4. Acquire exclusive ownership of the left arm.
+5. Move it to a known collision-checked Free Cam neutral pose at a limited speed.
+6. Switch the outgoing video source to `camera.left.jpeg`.
+7. Report `succeeded`; only then does the frontend enable look controls.
+
+```json
+{
+  "action": "free_cam_stop",
+  "payload": {
+    "sessionId": "browser-generated-uuid"
+  }
+}
+```
+
+Stopping returns the arm to its safe neutral or parked pose, releases arm ownership, switches video
+back to `camera.head.jpeg`, and only then reports success. It does not automatically resume the
+navigation command that was interrupted when Free Cam started.
+
+### 15.2 Pose updates
+
+```json
+{
+  "action": "free_cam_pose",
+  "payload": {
+    "sessionId": "browser-generated-uuid",
+    "panDeg": 15,
+    "tiltDeg": -5,
+    "sequence": 4
+  }
+}
+```
+
+`panDeg` and `tiltDeg` are absolute offsets from the left hand's Free Cam neutral pose. The
+frontend currently clamps pan to `[-60, 60]` degrees and tilt to `[-35, 45]` degrees. The edge must
+apply its own equal or tighter limits, solve IK locally, collision-check the complete trajectory,
+and enforce position, velocity, acceleration, and torque limits.
+
+Every session has a monotonically increasing `sequence`. The edge records the highest applied
+sequence and acknowledges but ignores an older or repeated pose. This prevents a delayed retry from
+moving the camera back to a stale orientation. Only the active `sessionId` is accepted.
+
+```python
+class FreeCamController:
+    async def start(self, session_id: str) -> None: ...
+    async def set_pose(
+        self,
+        session_id: str,
+        sequence: int,
+        pan_deg: float,
+        tilt_deg: float,
+    ) -> None: ...
+    async def stop(self, session_id: str, park: bool = True) -> None: ...
+    async def emergency_stop(self) -> None: ...
+```
+
+### 15.3 Safety and liveness
+
+- Base-motion commands are rejected while Free Cam owns an arm.
+- Arm actions are rejected while Free Cam is active.
+- The right arm remains in its existing safe state and is never implicitly acquired.
+- A browser disconnect or absence of valid Free Cam commands for a short watchdog interval exits
+  the mode and parks or safely freezes the arm.
+- IK failure, stale arm state, collision risk, camera loss, or actuator fault immediately stops arm
+  movement and reports failure.
+- The camera source changes only at session boundaries, never on individual pose updates.
+- A process shutdown invokes the same emergency stop and arm-release path.
+
+## 16. Camera-click projection
 
 `move_to_view` converts a normalized camera click into a navigation coordinate.
 
@@ -578,7 +695,7 @@ Reject missing or stale depth, points behind the robot, unreasonable distance, t
 
 The current video protocol sends bare JPEG bytes without a capture ID. For the first demo, use the latest depth only while the robot is stationary. A later protocol revision should attach a frame ID or capture timestamp so a click can be matched with the correct depth and pose.
 
-## 16. Approved action registry
+## 17. Approved action registry
 
 Only explicitly registered behaviors may be invoked remotely.
 
@@ -598,11 +715,11 @@ async def play_wave() -> None: ...
 
 The frontend currently uses `demo_action`. Either update it to send `wave` or temporarily map both names to the same implementation.
 
-## 17. Occupancy map strategy
+## 18. Occupancy map strategy
 
 The `navigation` event identifies a map and revision but does not contain occupancy cells.
 
-### 17.1 Hackathon choice: preset grid
+### 18.1 Hackathon choice: preset grid
 
 ```text
 mapId -> browser loads committed map.grid.json
@@ -611,7 +728,7 @@ mapRevision -> informational and cache/version metadata
 
 This requires no additional edge map transport and is the recommended initial approach.
 
-### 17.2 Later choice: live SLAM grid
+### 18.2 Later choice: live SLAM grid
 
 If the minimap must update while the robot explores, introduce a separate message containing map metadata and compressed cells:
 
@@ -631,7 +748,7 @@ If the minimap must update while the robot explores, introduce a separate messag
 
 Large map updates should use a separate heavy-data connection so they cannot delay control or Stop.
 
-## 18. Coordinate contract
+## 19. Coordinate contract
 
 Pose, route, goal, and occupancy grid must share a documented coordinate system:
 
@@ -658,7 +775,7 @@ A shared fixture should be used by edge and frontend tests:
 
 The frontend test must confirm that the route begins at the robot and ends at the goal in the correct map locations, without mirroring or unintended offsets.
 
-## 19. Simulator updates
+## 20. Simulator updates
 
 The simulator should publish navigation events so the minimap can be tested without hardware.
 
@@ -679,7 +796,7 @@ Stop received    -> idle with path cleared
 
 The relay integration test should also confirm that a browser joining mid-route receives the cached pose and navigation snapshot immediately.
 
-## 20. Main process and supervision
+## 21. Main process and supervision
 
 ```python
 async def main() -> None:
@@ -711,31 +828,32 @@ await asyncio.gather(
 
 On shutdown, the edge agent sends a local navigation Stop before closing its connections and bbOS readers.
 
-## 21. Testing plan
+## 22. Testing plan
 
-### 21.1 Protocol tests
+### 22.1 Protocol tests
 
 - Accept a valid command.
 - Reject missing IDs and unsupported actions.
 - Reject expired commands.
 - Reject invalid or non-finite coordinates.
 - Serialize command, robot-state, and navigation events exactly as expected by the frontend.
+- Validate Free Cam session IDs, absolute pose bounds, and sequence numbers.
 
-### 21.2 Journal tests
+### 22.2 Journal tests
 
 - A repeated command ID does not execute twice.
 - A retry returns the latest known result.
 - Reservation occurs before dispatch.
 - Old entries are pruned and capacity remains bounded.
 
-### 21.3 Navigation adapter tests
+### 22.3 Navigation adapter tests
 
 - `move_to` sends `clear`, `add_wp`, and `start` in order.
 - Stop is sent immediately.
 - Arrival requires an appropriate local state transition and distance tolerance.
 - Timeout and stopped-far-from-goal cases fail correctly.
 
-### 21.4 Navigation telemetry tests
+### 22.4 Navigation telemetry tests
 
 - Parallel local path arrays become ordered `{x, y}` points.
 - Missing paths become an empty array.
@@ -743,7 +861,7 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 - Status transitions cover planning, moving, replanning, arrived, and failed.
 - Pose-only changes do not resend the entire navigation route.
 
-### 21.5 Projection tests
+### 22.5 Projection tests
 
 - Normalize image coordinates correctly.
 - Reject out-of-range clicks.
@@ -751,7 +869,17 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 - Verify camera-to-navigation transforms against known calibration fixtures.
 - Reject targets outside safe range or bounds.
 
-### 21.6 Relay integration tests
+### 22.6 Free Cam tests
+
+- Starting Free Cam stops navigation before acquiring the arm.
+- The selected camera replaces the head camera on the existing video socket.
+- Absolute pan/tilt targets are clamped and collision-checked on the edge.
+- Duplicate or out-of-order sequences never replay stale arm motion.
+- Navigation and arm actions are rejected while Free Cam is active.
+- Stop, disconnect, watchdog expiry, camera failure, and process shutdown all release the arm safely.
+- Exiting returns to the head camera and does not resume interrupted navigation.
+
+### 22.7 Relay integration tests
 
 - Browser -> relay -> edge -> fake navigation works end to end.
 - Lost acknowledgement plus browser retry causes one execution.
@@ -759,7 +887,7 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 - Video congestion does not delay Stop.
 - Reconnect does not execute an expired command.
 
-### 21.7 On-robot test order
+### 22.8 On-robot test order
 
 1. Edge connects and reports pose/status.
 2. Minimap displays the robot in the correct position and orientation.
@@ -771,8 +899,11 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 8. The wave action runs once.
 9. Camera projection is checked with wheels disabled.
 10. Full `move_to_view` is tested in a controlled area.
+11. With wheels raised or otherwise secured, Free Cam locks the base and moves the left-hand camera
+    through small bounded targets.
+12. Stop, browser disconnect, and watchdog expiry each leave the selected arm and base safe.
 
-## 22. Implementation phases
+## 23. Implementation phases
 
 ### Phase 1: Reliable control foundation
 
@@ -808,14 +939,23 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 - Reachability and safety validation.
 - Stationary-robot demo flow.
 
-### Phase 5: Robot packaging
+### Phase 5: Free Cam
+
+- Exclusive mode and resource ownership.
+- Base lock and navigation cancellation.
+- Hand-camera video-source switching.
+- Safe neutral pose, edge-side IK, limits, and collision checking.
+- Sequence deduplication and disconnect watchdog.
+- Controlled on-robot tests for the left hand.
+
+### Phase 6: Robot packaging
 
 - bbOS autostart integration.
 - Structured logs and basic health reporting.
 - Clean shutdown behavior.
 - On-robot smoke and network-interruption tests.
 
-## 23. Decisions and open questions
+## 24. Decisions and open questions
 
 The following should be resolved before or during implementation:
 
@@ -827,10 +967,14 @@ The following should be resolved before or during implementation:
 6. Should the initial remote action be named `wave`, or must the frontend retain `demo_action`?
 7. What distance tolerance and timeout define successful arrival?
 8. What local response is required if the relay disconnects during autonomous navigation?
+9. What exact neutral pose, workspace, and edge-side pan/tilt limits are safe for the left-hand camera?
+10. Which existing process owns `arm_left.ctrl`, and what arbitration or handoff contract lets the
+    edge acquire it without fighting another writer?
+11. Should watchdog expiry hold the last safe pose or run a verified parking trajectory?
 
 Reasonable hackathon defaults are one room, one controlling browser, a preset map, no persistence, no recording, a five-second navigation snapshot interval, a bounded in-memory journal, and local navigation continuing to own all motion safety.
 
-## 24. Definition of done
+## 25. Definition of done
 
 The edge vertical slice is complete when:
 
@@ -844,3 +988,5 @@ The edge vertical slice is complete when:
 - A newly connected browser immediately receives cached robot and navigation snapshots.
 - A brief disconnect reconnects without replaying expired commands.
 - Camera-click navigation either passes the controlled on-robot test or remains explicitly disabled until its depth/calibration checks are satisfied.
+- Free Cam holds the base stopped, exposes only bounded edge-validated left-arm movement, switches
+  to the left-hand camera, rejects stale sequences, and exits safely on Stop or disconnect.
