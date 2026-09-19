@@ -1,0 +1,47 @@
+import { motion } from 'framer-motion'
+import { useEffect } from 'react'
+import { LibraryGrid, LibraryGridSkeleton } from '../components/library/LibraryGrid'
+import { Button } from '../components/ui/Button'
+import { PageShell, Wordmark } from '../components/ui/PageShell'
+import { fadeUp } from '../lib/motion'
+import { useMapsStore } from '../store/useMapsStore'
+
+export function LibraryPage() {
+  const { status, maps, error, load } = useMapsStore()
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return (
+    <PageShell wide>
+      <header className="flex items-center justify-between">
+        <Wordmark />
+        <span className="text-sm text-ink-2">Realtor</span>
+      </header>
+
+      <motion.section variants={fadeUp} initial="hidden" animate="show" className="mt-12 mb-8">
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Your spaces</h1>
+        <p className="mt-2 text-ink-2">Floor plans scanned by your bracketbot, ready to share.</p>
+      </motion.section>
+
+      {status === 'ready' && <LibraryGrid maps={maps} />}
+      {(status === 'idle' || status === 'loading') && <LibraryGridSkeleton />}
+      {status === 'error' && (
+        <div role="alert" className="rounded-2xl border border-line p-8 text-center">
+          <p className="font-semibold">Couldn't load your spaces</p>
+          <p className="mt-1 text-sm text-ink-2">{error}</p>
+          <Button
+            variant="secondary"
+            className="mt-4"
+            onClick={() => {
+              useMapsStore.setState({ status: 'idle' })
+              void load()
+            }}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+    </PageShell>
+  )
+}
