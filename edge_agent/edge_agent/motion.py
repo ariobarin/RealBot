@@ -23,6 +23,8 @@ class MotionInterrupted(RuntimeError):
 class MotionAdapter(Protocol):
     async def start(self, command_id: str, payload: dict[str, Any]) -> None: ...
 
+    async def wait(self) -> None: ...
+
     async def update(self, payload: dict[str, Any]) -> None: ...
 
     async def stop(self, reason: str) -> None: ...
@@ -80,6 +82,28 @@ class MotionCoordinator:
         if self.mode != expected:
             raise RuntimeError(f"{expected.value} is not active")
         await asyncio.wait_for(self._adapters[expected].update(payload), self._timeout_s)
+
+    async def wait_for_completion(
+        self,
+        expected_mode: MotionMode,
+        expected_command_id: str,
+    ) -> None:
+        """Wait for the owning bbOS behavior to report its terminal state.
+
+        ``start`` means that the local subsystem accepted the request; it does
+        not mean that navigation or an action has physically finished.
+        """
+        if self.mode != expected_mode or self.owner_command_id != expected_command_id:
+            raise MotionInterrupted(f"{expected_mode.value} no longer owns motion")
+        adapter = self._adapters[expected_mode]
+        epoch = self._epoch
+        await adapter.wait()
+        if (
+            epoch != self._epoch
+            or self.mode != expected_mode
+            or self.owner_command_id != expected_command_id
+        ):
+            raise MotionInterrupted(f"{expected_mode.value} was interrupted")
 
     async def complete(
         self,

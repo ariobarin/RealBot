@@ -14,6 +14,12 @@ authoritative implementation direction for Supabase-backed realtor accounts and
 accountless visitor invitations. Robot authentication remains outside that
 decision.
 
+> **Transport decision (2026-09-19):** LiveKit through the existing bbOS
+> `remote_session` is now selected for real hardware. The WebSocket/JPEG relay
+> proposal below is retained as historical rationale and as a local simulator
+> description, not as the deployment plan. See
+> [`LIVEKIT_ARCHITECTURE.md`](LIVEKIT_ARCHITECTURE.md).
+
 ## How to read this document
 
 - **Current** describes behavior observed in the repository today.

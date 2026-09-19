@@ -10,6 +10,8 @@ class Adapter:
     def __init__(self) -> None:
         self.starts = 0
         self.stops: list[str] = []
+        self.completed = asyncio.Event()
+        self.completed.set()
 
     async def start(self, command_id: str, payload: dict[str, Any]) -> None:
         self.starts += 1
@@ -17,20 +19,26 @@ class Adapter:
     async def update(self, payload: dict[str, Any]) -> None:
         pass
 
+    async def wait(self) -> None:
+        await self.completed.wait()
+
     async def stop(self, reason: str) -> None:
         self.stops.append(reason)
+        self.completed.set()
 
 
 class SlowAdapter(Adapter):
     def __init__(self) -> None:
         super().__init__()
         self.started_event = asyncio.Event()
-        self.release = asyncio.Event()
+        self.completed.clear()
 
     async def start(self, command_id: str, payload: dict[str, Any]) -> None:
         self.starts += 1
         self.started_event.set()
-        await self.release.wait()
+
+    async def wait(self) -> None:
+        await self.completed.wait()
 
 
 def command(command_id: str, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -101,7 +109,7 @@ def test_retry_while_command_is_running_does_not_start_twice() -> None:
         first = asyncio.create_task(agent.handle_command(message))
         await adapter.started_event.wait()
         await agent.handle_command(message)
-        adapter.release.set()
+        adapter.completed.set()
         await first
         assert adapter.starts == 1
         assert any(item["status"] == "executing" for item in published)

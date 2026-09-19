@@ -22,6 +22,9 @@ class FakeAdapter:
     async def update(self, payload: dict[str, Any]) -> None:
         self.updated.append(payload)
 
+    async def wait(self) -> None:
+        await self.release.wait()
+
     async def stop(self, reason: str) -> None:
         self.stopped.append(reason)
         self.release.set()

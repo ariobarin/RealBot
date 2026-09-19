@@ -24,6 +24,11 @@ The realtor-only post-scan workflow for following, pointing, spoken labeling,
 narrated testing, and verified interactable overlays is specified in
 [`../docs/INTERACTABLES_SETUP_PLAN.md`](../docs/INTERACTABLES_SETUP_PLAN.md).
 
+The selected real-hardware transport is LiveKit through bbOS `remote_session`;
+see [`../docs/LIVEKIT_ARCHITECTURE.md`](../docs/LIVEKIT_ARCHITECTURE.md). The
+current WebSocket client remains a simulator transport and does not yet connect
+this application to robot hardware.
+
 ## Run
 
 Copy `.env.example` to `.env.local` and fill in the Supabase project URL and publishable key.
@@ -43,7 +48,7 @@ npm run test:e2e     # playwright (first time: npx playwright install chromium)
 npm run build
 ```
 
-## Hackathon remote-control demo
+## Local simulated remote-control demo
 
 Run the lightweight relay and simulator in separate terminals:
 

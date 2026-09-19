@@ -1,23 +1,46 @@
-# RealBot edge agent foundation
+# RealBot orchestration and bbOS adapter foundation
 
-This package contains robot-authoritative runtime logic. It is intentionally
-independent from FastAPI and browser code so the real robot and
-`relay/simulator.py` can use the same safety and protocol behavior.
+This package contains RealBot-specific command and workflow orchestration. It
+is intentionally independent from FastAPI and browser code so a thin bbOS
+adapter and `relay/simulator.py` can exercise the same protocol behavior.
 
-No module in this package connects to hardware yet. Hardware integration must
-be added through adapters only after the deployed bbOS interfaces are audited.
+The deployed bbOS interfaces were inspected read-only on `bracketbot-0187` on
+2026-09-19. bbOS remains authoritative for IPC ownership, navigation, sensor
+alignment, SLAM health, command freshness, base safety, and motor control.
+`adapters/bbos_navigation.py` is the first thin adapter; it has not yet been
+launched against moving hardware.
+
+## Implementation boundary
+
+| Capability | Owner | This package does |
+| --- | --- | --- |
+| SLAM, maps, pose health | bbOS `slam` and `mapping` daemons | Read and normalize |
+| Path planning and arrival | bbOS `nav.command`, `nav.state`, `nav.plan` | Submit a route and await terminal state |
+| Base command freshness and limits | bbOS `base` daemon and firmware | Never bypass them |
+| Sensor timestamp alignment | bbOS `Reader(aligned_to=...)` | Validate and package the aligned samples |
+| Remote viewer/controller policy | Existing LiveKit session plus RealBot orchestration | Lease, validate, acknowledge, deduplicate |
+| Interactables setup | RealBot | Coordinate adapters and verification |
+
+The robot also contains a bbOS `remote_session` daemon with LiveKit camera,
+microphone, browser/Quest teleoperation, disconnect teardown, and arm parking.
+RealBot will extend that transport. The WebSocket relay is retained only for
+local simulation and protocol tests; it must not be deployed as a competing
+camera or hardware-control path. See
+[`../docs/LIVEKIT_ARCHITECTURE.md`](../docs/LIVEKIT_ARCHITECTURE.md).
 
 ## Responsibility split
 
 ```text
-web:        sends heartbeat and high-level commands; renders authoritative state
-relay:      grants one controller lease and forwards messages
-edge agent: validates commands, owns motion modes, expires the lease, stops locally
-adapters:   translate an owned mode into audited bbOS navigation/arm/follow calls
+web:        joins LiveKit; sends high-level commands; renders authoritative state
+LiveKit:    carries media plus namespaced realtime command/state data
+edge agent: validates commands and coordinates RealBot workflow modes
+adapters:   translate intent into audited bbOS topics and await bbOS state
+bbOS:       owns navigation, IPC writers, sensor alignment, local safety, hardware
 ```
 
-The relay is not a safety boundary. If the relay or browser disappears, the
-robot-local watchdog stops all active modes.
+LiveKit is not a safety boundary. The RealBot lease is an additional session
+guard layered over bbOS writer-disconnect handling, command timeouts, stale-SLAM
+stopping, and firmware safety.
 
 ## Part 1: protocol validation
 
@@ -32,51 +55,62 @@ Implemented in `edge_agent/protocol.py`.
 
 Before hardware use, add action-specific payload schemas and physical bounds.
 
-## Part 2: motion ownership
+## Part 2: workflow ownership
 
 Implemented in `edge_agent/motion.py`.
 
-1. Every motion adapter registers for exactly one `MotionMode`.
-2. `transition()` stops and acknowledges the current owner.
-3. Only after the old owner stops does the new adapter start.
+1. Every behavior adapter registers for exactly one `MotionMode`.
+2. `transition()` asks the current bbOS-backed behavior to stop and release its
+   writer before starting the next behavior.
+3. bbOS single-writer IPC remains the final ownership enforcement.
 4. A duplicate command ID for the active mode is idempotent.
 5. `stop_all()` bypasses the normal transition lock and invalidates an in-flight
    start using a transition epoch.
 6. A stop/start timeout moves the coordinator to `faulted` instead of starting a
    competing owner.
 
-Hardware adapters must make `stop()` idempotent and must acknowledge only after
-their bbOS writer is no longer producing movement.
+Adapters must make `stop()` idempotent and acknowledge only after their bbOS
+command writer is disabled or released. The coordinator must not implement a
+second planner, base controller, or topic lock.
+
+`BbosNavigationAdapter` writes one route to `nav.command`, keeps that writer
+alive, observes `nav.state`, and completes only on `reached`. `failed` or an
+unexpected return to `idle` fails the RealBot command. Camera `u/v` coordinates
+must be projected into map-frame `x/y` before reaching this adapter.
 
 ## Part 3: controller watchdog
 
 Implemented in `edge_agent/watchdog.py`.
 
 1. The controlling browser sends a heartbeat every second.
-2. The relay forwards heartbeats only from the current lease holder.
+2. The LiveKit session adapter accepts heartbeats only from the current authorized controller.
 3. The robot records receipt using monotonic time.
-4. Three seconds without a heartbeat invokes robot-local `stop_all()`.
-5. An explicit relay `control_lost` message stops sooner, but is not required for
+4. Three seconds without a heartbeat invokes the RealBot workflow stop path.
+5. An explicit participant-loss event stops sooner, but is not required for
    safety.
 6. A new heartbeat clears lease expiry but never resumes the previous behavior.
 
-The three-second value is an MVP default and must be validated on the demo
-network before moving hardware.
+This does not replace the deployed protections: `nav` stops on command-writer
+disconnect or stale SLAM, `base` zeros stale/missing `drive.ctrl`, and the
+firmware/ODrive layer has its own safety behavior. The three-second value is an
+MVP session default and must be validated on the demo network.
 
-## Part 4: synchronized capture
+## Part 4: bbOS-aligned capture evidence
 
 Implemented in `edge_agent/capture.py`.
 
-1. Feed RGB, depth, and SLAM pose samples into bounded timestamped queues.
-2. Select depth and pose nearest to the chosen RGB timestamp.
-3. Reject bundles older than 750 ms, RGB/depth skew over 50 ms, or RGB/pose skew
+1. Use `camera.depth` as the reference reader and open RGB and SLAM pose readers
+   with bbOS `aligned_to=depth_reader`, matching the deployed mapping daemon.
+2. Let bbOS select buffered samples by source timestamp; do not maintain a
+   parallel application-level synchronization buffer.
+3. Reject aligned sets older than 750 ms, RGB/depth skew over 50 ms, or RGB/pose skew
    over 100 ms.
 4. Assign a unique `capture_id` and retain map/calibration revisions.
 5. Use the accepted bundle for pointing or camera-click geometry.
 
-The current code defines and tests synchronization only. It does not yet connect
-to bbOS topics, calculate a pointing ray, or retain a capture ring for browser
-clicks.
+`AlignedCaptureBuilder` performs the final validation and packaging. It keeps
+wall-clock bbOS timestamps separate from its monotonic evidence timestamp. It
+does not yet calculate a pointing ray or retain captures for browser clicks.
 
 ## Part 5: orchestration
 
@@ -87,16 +121,20 @@ Implemented in `edge_agent/agent.py`.
 3. Acquire the corresponding motion mode.
 4. Run persistent modes (`following`, `free_cam`) until an explicit stop,
    transition, or lease loss.
-5. Complete bounded modes (`navigating`, `interactable_test`) and return to idle.
+5. Await the adapter's authoritative terminal result for bounded modes
+   (`navigating`, `interactable_test`) before returning to idle.
 6. Publish a final result and cache it by command ID.
 7. Include mode, owner, fault, lease, and last-stop reason in robot state.
 
-Navigation completion is simulated. The hardware adapter must wait for the local
-navigation state machine and arrival tolerance before returning.
+The simulator supplies fake terminal results. The bbOS navigation adapter waits
+for `nav.state=reached` and treats `failed` as failure; adapter `start()` alone
+never means physical completion.
 
-## Part 6: relay lease
+## Part 6: session lease
 
-Implemented in `relay/app.py`.
+The behavior is implemented in `relay/app.py` for local simulation. The
+hardware implementation belongs in the LiveKit session adapter after the
+deployed participant identity and token contract are verified.
 
 1. The first browser in a room receives the controller lease.
 2. Other browsers remain view-only.
@@ -105,8 +143,9 @@ Implemented in `relay/app.py`.
 5. Controller disconnect immediately sends `control_lost` to the robot.
 6. The next browser is promoted, but no robot behavior resumes automatically.
 
-This is a demo lease, not authentication. Tokens, roles, rate limits, and
-production identity remain separate work.
+Shared demo tokens distinguish robot, controller, and viewer connections.
+Production identity, authorization, token rotation, and rate limits remain
+separate work.
 
 ## Part 7: browser behavior
 
@@ -139,18 +178,23 @@ storage remain adapters around that state machine rather than embedded in it.
 
 Do not connect all hardware adapters at once. Use this order:
 
-1. Implement a local Stop adapter and verify it with wheels raised.
-2. Connect navigation state/commands and prove timeout plus disconnect Stop.
-3. Locate and wrap the deployed follow controller; verify follow-to-navigation
+1. Exercise `BbosNavigationAdapter` with a fake IPC backend, then verify
+   `nav.command`/`nav.state` with wheels raised.
+2. Prove normal arrival, route failure, stale-SLAM stop, command-writer release,
+   browser lease expiry, and reconnect-without-resume.
+3. Implement person following—the deployed bbOS and bbapps checkouts contain
+   person detection but no person-follow controller or topic—and verify writer
    handoff while the base is secured.
-4. Connect RGB/depth/SLAM timestamp readers and record synchronization fixtures.
+4. Connect bbOS aligned RGB/depth/SLAM readers and record capture fixtures.
 5. Connect Free Cam only after arm ownership, limits, collision checks, and its
    safe stop/park behavior are verified.
 6. Connect one pretrained interaction action last, initially requiring realtor
    confirmation before saving a point.
 
-Each adapter needs unit tests with a fake bbOS client and a supervised on-robot
-test showing start, normal completion, Stop, timeout, and process shutdown.
+Each adapter needs unit tests with fake IPC and a supervised on-robot test
+showing start, normal completion, Stop, timeout, writer release, and process
+shutdown. Do not import a whole daemon as a library; depend on its published
+topic contract or extract a deliberately supported bbOS API.
 
 ## Run tests
 
