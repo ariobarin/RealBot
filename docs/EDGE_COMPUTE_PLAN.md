@@ -6,6 +6,16 @@ Build a Python edge agent that runs on the robot alongside bbOS. The agent is th
 
 The edge agent does not replace navigation, SLAM, collision avoidance, or motor control. Those remain local responsibilities of `nav/main.py` and bbOS. The edge agent accepts high-level remote intent, validates it, forwards it to the correct local subsystem, and publishes authoritative robot telemetry.
 
+The post-SLAM realtor teaching workflow is specified separately in
+[`INTERACTABLES_SETUP_PLAN.md`](INTERACTABLES_SETUP_PLAN.md). The edge agent
+transports its high-level commands and authoritative state, while its robot-side
+orchestrator owns gesture, speech, safety, testing, and persistence.
+
+The minimal cross-cutting contracts required before moving-hardware MVP testing
+are defined in [`MVP_EDGE_GAP_PATCHES.md`](MVP_EDGE_GAP_PATCHES.md): exclusive
+motion ownership, disconnect failsafe, synchronized capture, test verification,
+and demo security.
+
 ```text
 Browser
    | control, state, navigation, video
