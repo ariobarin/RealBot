@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Eye, Radio } from 'lucide-react'
+import { Eye, LogOut, Radio } from 'lucide-react'
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LibraryGrid, LibraryGridSkeleton } from '../components/library/LibraryGrid'
@@ -7,9 +7,11 @@ import { Button } from '../components/ui/Button'
 import { PageShell, Wordmark } from '../components/ui/PageShell'
 import { fadeUp } from '../lib/motion'
 import { useMapsStore } from '../store/useMapsStore'
+import { useAuth } from '../auth/useAuth'
 
 export function LibraryPage() {
   const navigate = useNavigate()
+  const { logout } = useAuth()
   const { status, maps, error, load } = useMapsStore()
   useEffect(() => {
     void load()
@@ -17,7 +19,7 @@ export function LibraryPage() {
 
   const previewUser = () => {
     const room = localStorage.getItem('realbot-room') || 'demo-bot'
-    void navigate(`/user/${encodeURIComponent(room)}?preview=realtor`)
+    void navigate(`/user/${encodeURIComponent(room)}`)
   }
 
   return (
@@ -28,8 +30,24 @@ export function LibraryPage() {
           <Button variant="ghost" onClick={previewUser}>
             <Eye size={16} /> Preview user view
           </Button>
-          <Button variant="secondary" onClick={() => void navigate('/realtor/connect')}>
+          <Button
+            variant="secondary"
+            onClick={() =>
+              void navigate(
+                `/realtor/control/${encodeURIComponent(localStorage.getItem('realbot-room') || 'demo-bot')}`,
+              )
+            }
+          >
             <Radio size={16} /> Open robot dashboard
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              logout()
+              void navigate('/')
+            }}
+          >
+            <LogOut size={16} /> Sign out
           </Button>
         </div>
       </header>

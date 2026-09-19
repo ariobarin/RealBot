@@ -1,9 +1,12 @@
 import { expect, test } from '@playwright/test'
+import { authenticateRealtor } from './auth'
+
+test.beforeEach(async ({ page }) => authenticateRealtor(page))
 
 test('add card opens onboarding; pairing flips to Start after ~2 s; Start opens the preset map', async ({
   page,
 }) => {
-  await page.goto('/')
+  await page.goto('/realtor')
   await page.getByTestId('add-card').click()
   await expect(page).toHaveURL('/onboard')
 
@@ -27,7 +30,7 @@ test('add card opens onboarding; pairing flips to Start after ~2 s; Start opens 
 test('escape returns to the library and pairing restarts on re-entry', async ({ page }) => {
   await page.goto('/onboard')
   await page.keyboard.press('Escape')
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/realtor')
 
   await page.getByTestId('add-card').click()
   await expect(page.getByTestId('pairing')).toHaveAttribute('data-phase', 'pairing')

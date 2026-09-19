@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test'
+import { authenticateRealtor } from './auth'
+
+test.beforeEach(async ({ page }) => authenticateRealtor(page))
 
 test('library shows the preset SLAM map and an add card', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/realtor')
   await expect(page.getByRole('heading', { name: 'Your spaces' })).toBeVisible()
 
   const cards = page.getByTestId('map-card')
@@ -16,12 +19,12 @@ test('library shows the preset SLAM map and an add card', async ({ page }) => {
 })
 
 test('map card navigates to the map view', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/realtor')
   await page.getByTestId('map-card').first().click()
   await expect(page).toHaveURL('/map/small-house')
   await expect(page.getByRole('heading', { name: 'Small House' })).toBeVisible()
   await page.getByRole('link', { name: /Your spaces/ }).click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/realtor')
 })
 
 test('onboarding is reachable by URL', async ({ page }) => {

@@ -39,11 +39,16 @@ cd relay
 uv run python simulator.py
 ```
 
-Then run `web/` and use one of the two product views:
+Then run `web/` and open `/`. The login portal offers two role-aware paths:
 
-- `/connect` → `/user/:roomId` is the uncluttered end-user remote-tour experience.
-- `/realtor/connect` → `/realtor/control/:roomId` is the operator dashboard with room,
-  transport, pose, and command diagnostics.
+- **Visitor**: enter a tour access code (the relay room ID) to open `/user/:roomId`.
+- **Realtor**: use `realtor@realbot.demo` / `demo` to open `/realtor`, then enter the operator
+  dashboard with room, transport, pose, and command diagnostics.
+
+The credentials can be changed with `VITE_REALTOR_EMAIL` and `VITE_REALTOR_PASSWORD`. This is
+deliberately lightweight client-side access control for the hackathon prototype, not production
+authentication. Visitors are redirected away from realtor-only routes; realtor sessions can switch
+between management and the exact visitor experience.
 
 The realtor dashboard's **Preview as user** link opens the real user route rather than a
 separate mock. Both views receive the same camera frames and robot state. Clicking the live image

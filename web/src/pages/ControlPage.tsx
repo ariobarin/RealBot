@@ -1,6 +1,6 @@
-import { ArrowLeft, Bot, CircleStop, Eye, Radio, Sparkles, Video } from 'lucide-react'
+import { ArrowLeft, Bot, CircleStop, Eye, LogOut, Radio, Sparkles, Video } from 'lucide-react'
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { MapScene } from '../components/map/MapScene'
 import { Button } from '../components/ui/Button'
 import { PageShell, Wordmark } from '../components/ui/PageShell'
@@ -12,6 +12,7 @@ import {
 } from '../lib/remoteBotClient'
 import { useGridStore } from '../store/useGridStore'
 import { useViewStore } from '../store/useViewStore'
+import { useAuth } from '../auth/useAuth'
 
 const phaseCopy: Record<ConnectionPhase, string> = {
   idle: 'Disconnected',
@@ -33,9 +34,10 @@ interface ViewTarget {
 
 export function ControlPage({ view }: ControlPageProps) {
   const { roomId = 'demo-bot' } = useParams()
-  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const { session, logout } = useAuth()
   const isRealtor = view === 'realtor'
-  const isRealtorPreview = !isRealtor && searchParams.get('preview') === 'realtor'
+  const isRealtorPreview = !isRealtor && session?.role === 'realtor'
   const client = useMemo(() => new RemoteBotClient(), [])
   const [phase, setPhase] = useState<ConnectionPhase>('connecting')
   const [robot, setRobot] = useState<RobotState>()
@@ -111,22 +113,33 @@ export function ControlPage({ view }: ControlPageProps) {
           {isRealtor ? (
             <>
               <Link
-                to={`/user/${encodeURIComponent(roomId)}?preview=realtor`}
+                to={`/user/${encodeURIComponent(roomId)}`}
                 className="inline-flex items-center gap-1 text-sm text-ink-2 no-underline"
               >
                 <Eye size={16} /> Preview as user
               </Link>
-              <Link to="/" className="inline-flex items-center gap-1 text-sm text-ink-2 no-underline">
+              <Link to="/realtor" className="inline-flex items-center gap-1 text-sm text-ink-2 no-underline">
                 <ArrowLeft size={16} /> Spaces
               </Link>
             </>
-          ) : (
+          ) : isRealtorPreview ? (
             <Link
-              to={isRealtorPreview ? `/realtor/control/${encodeURIComponent(roomId)}` : '/connect'}
+              to={`/realtor/control/${encodeURIComponent(roomId)}`}
               className="inline-flex items-center gap-1 text-sm text-ink-2 no-underline"
             >
-              <ArrowLeft size={16} /> {isRealtorPreview ? 'Realtor dashboard' : 'Disconnect'}
+              <ArrowLeft size={16} /> Realtor dashboard
             </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                logout()
+                void navigate('/')
+              }}
+              className="inline-flex items-center gap-1 border-0 bg-transparent text-sm text-ink-2"
+            >
+              <LogOut size={16} /> Sign out
+            </button>
           )}
         </div>
       </header>
