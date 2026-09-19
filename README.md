@@ -23,6 +23,15 @@ Credentials belong in local environment variables or ignored `.env` files.
   the implementation decision for Supabase-backed realtor accounts and
   accountless, invitation-based visitor access. It does not cover robot
   authentication.
+- [`docs/MVP_EDGE_GAP_PATCHES.md`](docs/MVP_EDGE_GAP_PATCHES.md) turns the five
+  cross-cutting MVP gaps into concrete runtime behavior, protocol changes, and
+  acceptance checks.
+- [`docs/INTERACTABLES_SETUP_PLAN.md`](docs/INTERACTABLES_SETUP_PLAN.md) defines
+  the post-SLAM realtor workflow for following, bare-hand point capture, spoken
+  labeling, narrated physical testing, persistence, and web visualization.
+- [`docs/SLAM_TELEMETRY.md`](docs/SLAM_TELEMETRY.md) documents the observed
+  bbOS SLAM, mapping, navigation, and browser telemetry contracts, including
+  the live-map integration plan and degraded-state behavior.
 - [`docs/REMOTE_CONTROL_DIRECTION.md`](docs/REMOTE_CONTROL_DIRECTION.md) records
   non-authoritative working notes about the current web prototype, the immediate
   hackathon relay, and possible later remote-control architecture. It is context

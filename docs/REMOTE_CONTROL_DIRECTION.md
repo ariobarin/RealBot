@@ -72,6 +72,12 @@ The existing robot-hosted navigation UI reconnects to these sockets and keeps
 heavy map traffic separate from realtime control traffic. Manual teleoperation
 has a local timeout that stops motion when updates disappear.
 
+See [`SLAM_TELEMETRY.md`](SLAM_TELEMETRY.md) for the observed bbOS topic
+schemas, `/ws` state fields, `/heavy` binary packet contract, a 2026-09-19 robot
+inspection snapshot, and the requirements for replacing preset maps with live
+SLAM data. The deployed robot file may differ from this repository and must be
+checked before treating these working notes as a protocol contract.
+
 ### Realtor web application
 
 **Current:** `web/` is a standalone Vite, React, and TypeScript application. It

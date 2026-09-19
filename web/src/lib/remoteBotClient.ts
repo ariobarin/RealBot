@@ -7,6 +7,22 @@ export interface RobotState {
   status: string
   pose: { x: number; y: number; heading: number }
   at: number
+  mapId?: string
+  mapRevision?: string
+}
+
+export interface MapPoint {
+  x: number
+  y: number
+}
+
+export interface NavigationTelemetry {
+  commandId?: string
+  mapId?: string
+  mapRevision?: string
+  status: 'planning' | 'moving' | 'replanning' | 'arrived' | 'failed' | string
+  goal?: MapPoint
+  path: MapPoint[]
 }
 
 export interface CommandEnvelope {
@@ -14,7 +30,8 @@ export interface CommandEnvelope {
   commandId: string
   createdAt: number
   expiresAt: number
-  action: 'move_to' | 'move_to_view' | 'stop' | 'use_action'
+  action:
+    'move_to' | 'move_to_view' | 'stop' | 'use_action' | 'free_cam_start' | 'free_cam_pose' | 'free_cam_stop'
   payload: Record<string, unknown>
 }
 
@@ -30,6 +47,7 @@ export type RemoteBotEvent =
   | { type: 'connection'; phase: ConnectionPhase }
   | { type: 'presence'; online: boolean }
   | { type: 'state'; state: RobotState }
+  | { type: 'navigation'; navigation: NavigationTelemetry }
   | { type: 'command'; update: CommandUpdate }
   | { type: 'video'; frame: Blob }
 
@@ -148,6 +166,33 @@ export class RemoteBotClient {
     }
     if (message.type === 'robot_state') {
       this.emit({ type: 'state', state: message as unknown as RobotState })
+      return
+    }
+    if (message.type === 'navigation') {
+      const rawPath = Array.isArray(message.path) ? message.path : []
+      const path = rawPath.flatMap((point) => {
+        if (!point || typeof point !== 'object') return []
+        const candidate = point as Record<string, unknown>
+        return typeof candidate.x === 'number' && typeof candidate.y === 'number'
+          ? [{ x: candidate.x, y: candidate.y }]
+          : []
+      })
+      const rawGoal = message.goal
+      const goal = rawGoal && typeof rawGoal === 'object' ? (rawGoal as Record<string, unknown>) : undefined
+      this.emit({
+        type: 'navigation',
+        navigation: {
+          commandId: typeof message.commandId === 'string' ? message.commandId : undefined,
+          mapId: typeof message.mapId === 'string' ? message.mapId : undefined,
+          mapRevision: typeof message.mapRevision === 'string' ? message.mapRevision : undefined,
+          status: typeof message.status === 'string' ? message.status : 'planning',
+          goal:
+            goal && typeof goal.x === 'number' && typeof goal.y === 'number'
+              ? { x: goal.x, y: goal.y }
+              : undefined,
+          path,
+        },
+      })
       return
     }
     if (message.type === 'command_status' && typeof message.commandId === 'string') {

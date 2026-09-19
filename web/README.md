@@ -16,6 +16,12 @@ The decided implementation direction for browser authentication is in
 [`../docs/REALTOR_GUEST_AUTH_PLAN.md`](../docs/REALTOR_GUEST_AUTH_PLAN.md): Supabase Auth for
 invitation-only realtor accounts and accountless, expiring guest invitations for visitors. Robot
 authentication is outside that plan.
+The observed robot-side SLAM topics, binary map packets, degraded states, and
+live-telemetry integration requirements are documented in
+[`../docs/SLAM_TELEMETRY.md`](../docs/SLAM_TELEMETRY.md).
+The realtor-only post-scan workflow for following, pointing, spoken labeling,
+narrated testing, and verified interactable overlays is specified in
+[`../docs/INTERACTABLES_SETUP_PLAN.md`](../docs/INTERACTABLES_SETUP_PLAN.md).
 
 ## Run
 
@@ -71,6 +77,17 @@ separate mock. Both views receive the same camera frames and robot state. Clicki
 sends `move_to_view` with normalized image coordinates; `stop` and `use_action` use the same
 acknowledged command channel. The SLAM map is realtor-only telemetry and is not a second steering
 surface. Set `VITE_RELAY_WS_URL` when the relay is not on port 8000 of the same host.
+
+The visitor camera includes a read-only 2D minimap. Robot pose comes from `robot_state`; the client
+also accepts an authoritative `navigation` telemetry message containing `status`, `goal`, `path`,
+and optional `mapId` / `mapRevision`. All coordinates are map-frame metres. The frontend only
+renders this data—it does not resolve camera clicks or calculate navigation paths.
+
+Visitor controls also include a Free Cam mode for the left-hand camera. The frontend sends
+`free_cam_start`, bounded absolute `free_cam_pose` targets, and `free_cam_stop`. Entering the mode
+must be implemented atomically by the edge: stop and lock the mobile base, acquire the left arm,
+and switch the outgoing video source to `camera.left.jpeg`. The browser never
+publishes raw joint commands.
 
 ## Maps
 
