@@ -1,32 +1,52 @@
 # RealBot Edge Compute Plan
 
+> **Implementation status (2026-09-19): simulator-backed foundation, not a
+> deployed robot runtime.** A read-only audit of `bracketbot-0187` confirmed
+> that bbOS already owns navigation, SLAM health, timestamp alignment,
+> single-writer IPC, stale-command stopping, motor safety, and a LiveKit
+> `remote_session` daemon. RealBot should add thin topic adapters and product
+> orchestration rather than recreate those systems. See
+> [`../edge_agent/README.md`](../edge_agent/README.md) for the audited boundary.
+> LiveKit through bbOS `remote_session` is the selected hardware transport; see
+> [`LIVEKIT_ARCHITECTURE.md`](LIVEKIT_ARCHITECTURE.md). Older relay/JPEG sections
+> in this plan describe the existing simulator and are not deployment guidance.
+
 ## 1. Purpose
 
-Build a Python edge agent that runs on the robot alongside bbOS. The agent is the bridge between the public relay and the robot's existing local services.
+Build a Python edge agent that runs on the robot alongside bbOS. The agent adds
+RealBot workflow behavior at the verified extension point of the existing
+LiveKit `remote_session` and bridges high-level intent to local bbOS services.
 
 The edge agent does not replace navigation, SLAM, collision avoidance, or motor control. Those remain local responsibilities of `nav/main.py` and bbOS. The edge agent accepts high-level remote intent, validates it, forwards it to the correct local subsystem, and publishes authoritative robot telemetry.
 
+The post-SLAM realtor teaching workflow is specified separately in
+[`INTERACTABLES_SETUP_PLAN.md`](INTERACTABLES_SETUP_PLAN.md). The edge agent
+transports its high-level commands and authoritative state, while its robot-side
+orchestrator owns gesture, speech, safety, testing, and persistence.
+
+The minimal cross-cutting contracts required before moving-hardware MVP testing
+are defined in [`MVP_EDGE_GAP_PATCHES.md`](MVP_EDGE_GAP_PATCHES.md): exclusive
+motion ownership, disconnect failsafe, synchronized capture, test verification,
+and demo security.
+
 ```text
 Browser
-   | control, state, navigation, video
+   | HTTPS token/persistence + LiveKit media/data
    v
-Public relay
-   | outbound connections initiated by robot
-   v
-Edge agent on bbOS
-   |-- Local navigation WebSocket -> SLAM, planner, wheels
-   |-- bbOS camera topic          -> JPEG video
-   `-- Action registry            -> approved arm actions
+bbOS remote_session + RealBot workflow bridge
+   |-- nav.command/nav.state -> existing planner and base controller
+   |-- aligned bbOS readers  -> camera, depth, pose, SLAM health
+   `-- approved action adapters -> existing arm/policy applications
 ```
 
 ## 2. Hackathon scope
 
 The first working vertical slice must support:
 
-1. An outbound robot connection to the public relay.
+1. A browser and robot on different networks joining one authorized LiveKit room.
 2. Robot pose and status telemetry.
 3. Authoritative navigation goal, route, and planning status telemetry.
-4. Latest-only JPEG camera streaming.
+4. Existing robot camera tracks delivered through LiveKit.
 5. `move_to`, `stop`, and one approved `use_action` behavior.
 6. `move_to_view` after camera/depth projection is validated.
 7. Command expiry and duplicate-command protection.
@@ -35,7 +55,15 @@ The first working vertical slice must support:
 10. A Free Cam mode that locks the mobile base, safely moves the left arm, and streams its camera
     until the visitor exits the mode.
 
-The hackathon version does not require durable storage, multiple controllers, production authentication, WebRTC, a database, or a general-purpose remote shell.
+The robot's existing LiveKit/WebRTC remote-session implementation is the chosen
+transport. The disposable WebSocket relay remains a simulator only and must not
+be deployed as a competing hardware or camera owner. Durable interactable
+storage is separate application-backend work; a general-purpose remote shell
+remains out of scope.
+
+The separately planned browser authentication work is documented in
+[`REALTOR_GUEST_AUTH_PLAN.md`](REALTOR_GUEST_AUTH_PLAN.md) and does not add robot
+authentication responsibilities to the edge agent.
 
 ## 3. Proposed package
 
@@ -47,7 +75,8 @@ edge_agent/
 |-- config.py
 |-- protocol.py
 |-- relay_client.py
-|-- nav_client.py
+|-- adapters/
+|   `-- bbos_navigation.py
 |-- navigation_telemetry.py
 |-- camera.py
 |-- projection.py
@@ -57,7 +86,7 @@ edge_agent/
 `-- tests/
     |-- test_protocol.py
     |-- test_command_journal.py
-    |-- test_nav_client.py
+    |-- test_bbos_navigation.py
     |-- test_navigation_telemetry.py
     |-- test_projection.py
     `-- test_agent_integration.py
@@ -81,7 +110,7 @@ Browser command
 ### 4.2 Robot and navigation telemetry
 
 ```text
-nav/main.py state
+bbOS slam.pose + nav.state + nav.plan
   |-- normalize_robot_state()
   |     `-- robot_state: current pose, readiness, general status
   |
@@ -114,7 +143,6 @@ class EdgeConfig:
     relay_ws_url: str
     room_id: str
     map_id: str
-    nav_ws_url: str = "ws://127.0.0.1:8010/ws"
     camera_topic: str = "camera.head.jpeg"
     left_hand_camera_topic: str = "camera.left.jpeg"
     video_fps: float = 7.0
@@ -133,7 +161,6 @@ Expected environment variables:
 RELAY_WS_URL=wss://relay.example.com
 ROOM_ID=demo-bot
 MAP_ID=small-house
-NAV_WS_URL=ws://127.0.0.1:8010/ws
 CAMERA_TOPIC=camera.head.jpeg
 LEFT_HAND_CAMERA_TOPIC=camera.left.jpeg
 VIDEO_FPS=7
@@ -409,37 +436,32 @@ For the hackathon, the journal is bounded, in memory, and cleared when the proce
 
 ## 10. Local navigation adapter
 
-The edge connects to the existing local service at `ws://127.0.0.1:8010/ws`.
+The deployed bbOS navigation daemon already exposes typed `nav.command`,
+`nav.state`, and `nav.plan` topics. The adapter holds the exclusive command
+writer for the lifetime of a route and reads navigation state; it does not send
+commands through the diagnostic web UI or write `drive.ctrl`.
 
 ```python
-class NavClient:
-    async def connect(self) -> None: ...
-    async def run(self) -> None: ...
-    async def send(self, message: dict[str, Any]) -> None: ...
-    async def stop(self) -> None: ...
-    async def move_to(
-        self,
-        x: float,
-        y: float,
-        heading: float | None = None,
-    ) -> None: ...
-    async def wait_until_arrived(
-        self,
-        target: tuple[float, float],
-        timeout_s: float,
-    ) -> None: ...
+class BbosNavigationAdapter:
+    async def start(self, command_id: str, payload: dict[str, Any]) -> None: ...
+    async def wait(self) -> None: ...
+    async def stop(self, reason: str) -> None: ...
 ```
 
-`move_to()` translates a high-level request into the existing waypoint API:
+`start()` writes the route through the existing typed API:
 
 ```python
-async def move_to(x: float, y: float, heading: float | None) -> None:
-    await send({"type": "clear"})
-    await send({"type": "add_wp", "x": x, "y": y, "h": heading})
-    await send({"type": "start"})
+with Writer("nav.command", Type("nav_command"), keeptime=False) as command:
+    with command.buf() as output:
+        output["enabled"] = True
+        output["num_waypoints"] = 1
+        output["waypoints"][0] = (x, y, heading)
 ```
 
-Completion requires more than successfully sending `start`. The edge watches local state until navigation has run and the final pose is within an arrival tolerance of the target. Otherwise it reports a timeout or failure.
+Completion requires more than publishing the route. The adapter waits for bbOS
+to report `nav.state=reached`; `failed`, command-writer loss, Stop, or an
+unexpected return to `idle` cannot be reported as success. bbOS owns arrival
+tolerance, planning, stale-pose handling, drive acquisition, and base output.
 
 ## 11. Camera capture and video
 
@@ -820,13 +842,14 @@ The main tasks run concurrently:
 
 ```python
 await asyncio.gather(
-    nav_client.run(),
     run_reconnecting("control", agent.control_session),
     run_reconnecting("video", agent.video_session),
 )
 ```
 
-On shutdown, the edge agent sends a local navigation Stop before closing its connections and bbOS readers.
+On shutdown, the adapter writes `nav.command.enabled=false` and releases the
+command writer. The bbOS navigation daemon independently stops when that writer
+disconnects.
 
 ## 22. Testing plan
 
@@ -910,7 +933,7 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 - Configuration and protocol types.
 - Command validation and journal.
 - Relay control connection and reconnection.
-- Local navigation connection.
+- Thin `nav.command`/`nav.state` adapter.
 - `move_to` and priority Stop.
 - Robot-state telemetry.
 - Unit and fake-WebSocket tests.
@@ -933,7 +956,7 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 
 ### Phase 4: Camera-click navigation
 
-- Depth acquisition and synchronization.
+- Depth acquisition using bbOS `Reader(aligned_to=...)` synchronization.
 - Calibration loading.
 - Pixel deprojection and frame transforms.
 - Reachability and safety validation.
@@ -959,14 +982,19 @@ On shutdown, the edge agent sends a local navigation Stop before closing its con
 
 The following should be resolved before or during implementation:
 
-1. Where will the public relay run for the demo?
+1. What browser-facing endpoint starts the session and returns a user-scoped
+   LiveKit token, and what supported bbOS hook should carry namespaced RealBot
+   messages? The robot-side token endpoint and existing tracks/topics are now
+   recorded in `LIVEKIT_ARCHITECTURE.md`.
 2. Is the visitor minimap using a committed preset grid or expected to receive live SLAM grid changes?
 3. What exact `MAP_ID` corresponds to the robot's active navigation frame?
-4. Can the edge read `camera.head.jpeg` and the needed depth topic without conflicting with other consumers?
-5. Which bbOS calibration data provides the camera intrinsics and camera-to-robot transform?
+4. Which exact aligned camera stream should pointing use: decoded head RGB,
+   rectified stereo, or an existing mapping output?
+5. Which audited bbOS calibration revision should be stored with captures?
 6. Should the initial remote action be named `wave`, or must the frontend retain `demo_action`?
 7. What distance tolerance and timeout define successful arrival?
-8. What local response is required if the relay disconnects during autonomous navigation?
+8. After the additional RealBot lease expires, which behavior adapters beyond
+   navigation must be stopped or safely parked?
 9. What exact neutral pose, workspace, and edge-side pan/tilt limits are safe for the left-hand camera?
 10. Which existing process owns `arm_left.ctrl`, and what arbitration or handoff contract lets the
     edge acquire it without fighting another writer?
@@ -978,7 +1006,7 @@ Reasonable hackathon defaults are one room, one controlling browser, a preset ma
 
 The edge vertical slice is complete when:
 
-- A robot and browser on different networks connect through the relay.
+- A robot and browser on different networks join the same authorized LiveKit room.
 - The browser receives current pose, camera frames, map identity, goal, and authoritative path.
 - The visitor minimap renders pose, heading, destination, route, and planning state correctly.
 - `move_to` results in local navigation and a correct status lifecycle.

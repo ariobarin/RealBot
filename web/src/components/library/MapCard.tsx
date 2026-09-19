@@ -44,7 +44,9 @@ export function MapCard({ map }: { map: MapSummary }) {
           <div className="mt-3 space-y-0.5 px-0.5">
             <div className="flex items-baseline justify-between gap-3">
               <h3 className="truncate text-[15px] font-semibold">{map.name}</h3>
-              <span className="shrink-0 text-xs text-ink-3">SLAM · 5 cm grid</span>
+              <span className="shrink-0 text-xs text-ink-3">
+                SLAM · {map.cloud ? '3D scan' : '5 cm grid'}
+              </span>
             </div>
             <p className="text-sm text-ink-2">
               ~{map.areaM2} m² · {map.rooms} rooms · scanned {fmtDate(map.scannedAt)}

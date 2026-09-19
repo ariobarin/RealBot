@@ -10,8 +10,8 @@ this repository does not include the robot OS or its environment.
 - `teleop.py`, `quest_teleop/`: keyboard and headset teleoperation
 - `examples/`: hardware inspection examples
 - `nav/`, `inference/`: navigation and policy inference
-- `edge_agent/`: robot-authoritative protocol, motion ownership, capture synchronization, and watchdog
-- `relay/`: public demo relay and robot simulator using fake edge adapters
+- `edge_agent/`: RealBot command/workflow orchestration plus thin adapters over authoritative bbOS services
+- `relay/`: local protocol simulator and fake robot adapters; not the selected hardware transport
 - `stereo_capture_web.py`: stereo calibration capture
 - `greeter/`, `mimic/`, `play_sound/`, `low_battery/`: robot apps
 
@@ -21,10 +21,25 @@ Credentials belong in local environment variables or ignored `.env` files.
 
 ## Planning references
 
+- [`docs/REALTOR_GUEST_AUTH_PLAN.md`](docs/REALTOR_GUEST_AUTH_PLAN.md) records
+  the implementation decision for Supabase-backed realtor accounts and
+  accountless, invitation-based visitor access. It does not cover robot
+  authentication.
+- [`docs/MVP_EDGE_GAP_PATCHES.md`](docs/MVP_EDGE_GAP_PATCHES.md) turns the five
+  cross-cutting MVP gaps into concrete runtime behavior, protocol changes, and
+  acceptance checks.
+- [`docs/INTERACTABLES_SETUP_PLAN.md`](docs/INTERACTABLES_SETUP_PLAN.md) defines
+  the post-SLAM realtor workflow for following, bare-hand point capture, spoken
+  labeling, narrated physical testing, persistence, and web visualization.
+- [`docs/SLAM_TELEMETRY.md`](docs/SLAM_TELEMETRY.md) documents the observed
+  bbOS SLAM, mapping, navigation, and browser telemetry contracts, including
+  the live-map integration plan and degraded-state behavior.
+- [`docs/LIVEKIT_ARCHITECTURE.md`](docs/LIVEKIT_ARCHITECTURE.md) records the
+  selected cross-network architecture: existing bbOS LiveKit transport, thin
+  RealBot workflow adapters, and no competing production WebSocket relay.
 - [`docs/REMOTE_CONTROL_DIRECTION.md`](docs/REMOTE_CONTROL_DIRECTION.md) records
-  non-authoritative working notes about the current web prototype, the immediate
-  hackathon relay, and possible later remote-control architecture. It is context
-  for discussion, not an API contract, safety specification, or source of truth.
+  older non-authoritative working notes and tradeoffs. Where it discusses the
+  WebSocket/JPEG relay as a deployment option, the LiveKit decision supersedes it.
 
 ## Web deployment
 

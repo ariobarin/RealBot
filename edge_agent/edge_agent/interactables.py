@@ -139,6 +139,10 @@ class InteractableSetup:
                     "point": self.draft.point,
                 },
             )
+            await self.motion.wait_for_completion(
+                MotionMode.INTERACTABLE_TEST,
+                command_id,
+            )
             await self.motion.complete(
                 MotionMode.INTERACTABLE_TEST,
                 command_id,

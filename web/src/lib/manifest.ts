@@ -1,5 +1,11 @@
 export type MapStatus = 'ready' | 'scanning' | 'draft'
 
+export interface PointCloudSummary {
+  /** Interleaved asset: count * vec3 float32 positions, then count * RGB uint8 colours. */
+  data: string
+  meta: string
+}
+
 export interface MapSummary {
   id: string
   name: string
@@ -9,6 +15,7 @@ export interface MapSummary {
   rooms: number
   scannedAt: string
   status: MapStatus
+  cloud?: PointCloudSummary
 }
 
 export async function fetchManifest(signal?: AbortSignal): Promise<MapSummary[]> {

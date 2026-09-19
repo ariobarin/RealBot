@@ -13,6 +13,9 @@ class Adapter:
     async def update(self, payload: dict[str, Any]) -> None:
         pass
 
+    async def wait(self) -> None:
+        pass
+
     async def stop(self, reason: str) -> None:
         pass
 

@@ -1,10 +1,9 @@
-"""Capture-time synchronization for RGB, depth, and map pose."""
+"""Validation and packaging for samples already aligned by bbOS IPC."""
 
 from __future__ import annotations
 
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -37,54 +36,53 @@ class CaptureSyncError(RuntimeError):
     pass
 
 
-class CaptureSynchronizer:
+class AlignedCaptureBuilder:
+    """Validate a bbOS-aligned RGB/depth/pose set and create evidence.
+
+    bbOS owns buffering and source-time alignment through ``Reader(aligned_to=...)``.
+    This class deliberately does not maintain a second set of sensor queues.
+    """
+
     def __init__(
         self,
         *,
-        max_samples: int = 90,
         max_rgb_depth_skew_ms: float = 50,
         max_rgb_pose_skew_ms: float = 100,
         max_age_ms: float = 750,
     ) -> None:
-        self._rgb: deque[TimedSample[bytes]] = deque(maxlen=max_samples)
-        self._depth: deque[TimedSample[Any]] = deque(maxlen=max_samples)
-        self._pose: deque[TimedSample[dict[str, float]]] = deque(maxlen=max_samples)
         self._depth_skew_ns = int(max_rgb_depth_skew_ms * 1_000_000)
         self._pose_skew_ns = int(max_rgb_pose_skew_ms * 1_000_000)
         self._max_age_ns = int(max_age_ms * 1_000_000)
 
-    def add_rgb(self, timestamp_ns: int, value: bytes) -> None:
-        self._rgb.append(TimedSample(timestamp_ns, value))
-
-    def add_depth(self, timestamp_ns: int, value: Any) -> None:
-        self._depth.append(TimedSample(timestamp_ns, value))
-
-    def add_pose(self, timestamp_ns: int, value: dict[str, float]) -> None:
-        self._pose.append(TimedSample(timestamp_ns, value))
-
     def bundle(
         self,
         *,
+        rgb: TimedSample[bytes],
+        depth: TimedSample[Any],
+        pose: TimedSample[dict[str, float]],
         map_id: str,
         map_revision: int,
         calibration_revision: str,
-        now_ns: int | None = None,
+        now_timestamp_ns: int | None = None,
+        now_monotonic_ns: int | None = None,
     ) -> CaptureBundle:
-        if not self._rgb or not self._depth or not self._pose:
-            raise CaptureSyncError("missing RGB, depth, or pose sample")
-        now_ns = time.monotonic_ns() if now_ns is None else now_ns
-        rgb = self._rgb[-1]
-        depth = min(self._depth, key=lambda sample: abs(sample.timestamp_ns - rgb.timestamp_ns))
-        pose = min(self._pose, key=lambda sample: abs(sample.timestamp_ns - rgb.timestamp_ns))
-        if now_ns - rgb.timestamp_ns > self._max_age_ns:
+        # bbOS source timestamps use wall-clock nanoseconds. Keep monotonic time
+        # only for local evidence; comparing the two clocks would be invalid.
+        now_timestamp_ns = time.time_ns() if now_timestamp_ns is None else now_timestamp_ns
+        now_monotonic_ns = (
+            time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        )
+        if now_timestamp_ns - rgb.timestamp_ns > self._max_age_ns:
             raise CaptureSyncError("RGB sample is stale")
+        if rgb.timestamp_ns > now_timestamp_ns + self._max_age_ns:
+            raise CaptureSyncError("RGB timestamp is in the future")
         if abs(depth.timestamp_ns - rgb.timestamp_ns) > self._depth_skew_ns:
             raise CaptureSyncError("RGB/depth skew exceeds limit")
         if abs(pose.timestamp_ns - rgb.timestamp_ns) > self._pose_skew_ns:
             raise CaptureSyncError("RGB/pose skew exceeds limit")
         return CaptureBundle(
             capture_id=f"cap_{uuid.uuid4().hex}",
-            captured_monotonic_ns=now_ns,
+            captured_monotonic_ns=now_monotonic_ns,
             rgb_timestamp_ns=rgb.timestamp_ns,
             depth_timestamp_ns=depth.timestamp_ns,
             pose_timestamp_ns=pose.timestamp_ns,

@@ -45,7 +45,7 @@ export function MapPage() {
         {status === 'ready' && grid && summary && (
           <>
             <SceneBoundary summary={summary}>
-              <MapScene grid={grid} />
+              <MapScene grid={grid} cloud={summary.cloud} />
             </SceneBoundary>
             <MapHud summary={summary} grid={grid} />
           </>

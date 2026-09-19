@@ -35,6 +35,16 @@ test('TurtleBot3 Sandbox renders through the same map view', async ({ page }) =>
   await expect(page.getByText('SLAM · 5 cm')).toBeVisible()
 })
 
+test('Bracketbot scan loads its derived grid and full 3D cloud asset', async ({ page }) => {
+  const cloudResponse = page.waitForResponse((response) => response.url().endsWith('/maps/bracketbot-scan/cloud.bin'))
+  await page.goto('/map/bracketbot-scan')
+  await expect(page.getByTestId('map-view')).toHaveAttribute('data-status', 'ready', { timeout: 10_000 })
+  await expect(page.getByRole('heading', { name: 'Bracketbot Scan' })).toBeVisible()
+  await expect(page.getByText('SLAM · 3 cm')).toBeVisible()
+  test.skip(!(await hasWebGL(page)), 'WebGL unavailable in this browser')
+  expect((await cloudResponse).ok()).toBe(true)
+})
+
 test('clicking the floor sends an add_wp command to the mock bot', async ({ page }) => {
   await page.goto('/map/small-house')
   await expect(page.getByTestId('map-view')).toHaveAttribute('data-status', 'ready', { timeout: 10_000 })

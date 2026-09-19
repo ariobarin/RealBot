@@ -76,6 +76,7 @@ calibration_tests/
 
 .env
 .env.*
+!web/.env.example
 
 # web/ frontend (re-allow paths the robot-side rules above would swallow)
 !web/src/lib/

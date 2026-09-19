@@ -98,6 +98,7 @@ class EdgeAgent:
 
     async def _run_to_completion(self, mode: MotionMode, command: Command) -> None:
         await self.motion.transition(mode, command.command_id, command.payload)
+        await self.motion.wait_for_completion(mode, command.command_id)
         await self.motion.complete(mode, command.command_id, "completed")
 
     async def _lease_expired(self, reason: str) -> None:

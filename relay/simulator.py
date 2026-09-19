@@ -32,9 +32,14 @@ class SimulatedMotionAdapter:
         self.mode = mode
         self.highest_sequence = -1
         self.session_id: str | None = None
+        self.payload: dict[str, Any] = {}
+        self.stopped = False
 
     async def start(self, command_id: str, payload: dict[str, Any]) -> None:
+        del command_id
         self.simulator.status = self.mode.value
+        self.payload = payload
+        self.stopped = False
         if self.mode == MotionMode.FREE_CAM:
             session_id = payload.get("sessionId")
             if not isinstance(session_id, str) or not session_id:
@@ -45,7 +50,13 @@ class SimulatedMotionAdapter:
         if self.mode == MotionMode.FOLLOWING:
             return
 
+    async def wait(self) -> None:
+        if self.mode not in {MotionMode.NAVIGATING, MotionMode.INTERACTABLE_TEST}:
+            raise RuntimeError(f"{self.mode.value} is a persistent mode")
         await asyncio.sleep(0.15)
+        if self.stopped:
+            raise RuntimeError(f"{self.mode.value} was stopped")
+        payload = self.payload
         if self.mode == MotionMode.NAVIGATING:
             if "x" in payload and "y" in payload:
                 self.simulator.x = float(payload["x"])
@@ -73,6 +84,7 @@ class SimulatedMotionAdapter:
             raise ValueError("Free Cam pose outside bounds")
 
     async def stop(self, reason: str) -> None:
+        self.stopped = True
         self.session_id = None
         self.simulator.status = "stopped" if reason != "completed" else "ready"
 

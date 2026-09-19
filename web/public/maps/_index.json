@@ -1,5 +1,19 @@
 [
   {
+    "id": "bracketbot-scan",
+    "name": "Bracketbot Scan",
+    "thumb": "/maps/bracketbot-scan/thumb.png",
+    "grid": "/maps/bracketbot-scan/map.grid.json",
+    "cloud": {
+      "data": "/maps/bracketbot-scan/cloud.bin",
+      "meta": "/maps/bracketbot-scan/cloud.json"
+    },
+    "areaM2": 12,
+    "rooms": 1,
+    "scannedAt": "2026-09-19T22:13:54Z",
+    "status": "ready"
+  },
+  {
     "id": "small-house",
     "name": "Small House",
     "thumb": "/maps/small-house/thumb.png",

@@ -8,6 +8,18 @@
 > Running robot behavior, deployed services, validated interfaces, and current
 > code take precedence. Expect this document to become incomplete or stale.
 
+The browser authentication provider and guest-access model are no longer open
+questions. [`REALTOR_GUEST_AUTH_PLAN.md`](REALTOR_GUEST_AUTH_PLAN.md) is the
+authoritative implementation direction for Supabase-backed realtor accounts and
+accountless visitor invitations. Robot authentication remains outside that
+decision.
+
+> **Transport decision (2026-09-19):** LiveKit through the existing bbOS
+> `remote_session` is now selected for real hardware. The WebSocket/JPEG relay
+> proposal below is retained as historical rationale and as a local simulator
+> description, not as the deployment plan. See
+> [`LIVEKIT_ARCHITECTURE.md`](LIVEKIT_ARCHITECTURE.md).
+
 ## How to read this document
 
 - **Current** describes behavior observed in the repository today.
@@ -65,6 +77,12 @@ bounds, display/planner controls, and `wipe_map`.
 The existing robot-hosted navigation UI reconnects to these sockets and keeps
 heavy map traffic separate from realtime control traffic. Manual teleoperation
 has a local timeout that stops motion when updates disappear.
+
+See [`SLAM_TELEMETRY.md`](SLAM_TELEMETRY.md) for the observed bbOS topic
+schemas, `/ws` state fields, `/heavy` binary packet contract, a 2026-09-19 robot
+inspection snapshot, and the requirements for replacing preset maps with live
+SLAM data. The deployed robot file may differ from this repository and must be
+checked before treating these working notes as a protocol contract.
 
 ### Realtor web application
 
@@ -145,10 +163,14 @@ Robot agent  ── outbound WSS ──>  BracketBot Cloud  <── WSS ──  
     └── command journal                 └── session and command routing
 ```
 
-**Later direction:** extend the existing cloud identity/device system if it is
-a good fit, while keeping the realtime gateway independently deployable. The
-robot agent should bridge the existing local navigation service rather than
-replace the planner or motor-control stack.
+**Later direction:** use Supabase Auth for realtor identities and Supabase
+Postgres for organization membership, spaces, and tour invitations. Visitors
+receive expiring invitation links and temporary guest sessions rather than
+accounts. Browser connections exchange an authorized realtor or guest session
+for a short-lived socket ticket. Keep the realtime gateway independently
+deployable. This decision does not change or select authentication for robot
+connections. The robot agent should bridge the existing local navigation
+service rather than replace the planner or motor-control stack.
 
 ### Robot agent
 
@@ -166,8 +188,10 @@ The contemplated robot daemon would:
 
 The contemplated gateway would:
 
-- authenticate devices and users;
-- enforce device ownership and organization membership;
+- validate Supabase realtor sessions and temporary visitor guest sessions;
+- enforce organization membership, space access, invitation state, and guest
+  permissions for browser connections;
+- issue short-lived, single-use tickets for browser WebSocket connections;
 - advertise whether a robot is online;
 - grant a time-bounded control lease to one controller;
 - allow separately authorized view-only sessions if desired;
@@ -291,7 +315,8 @@ These matter if the prototype becomes a product, but they do not block the
 hackathon path:
 
 - Which repository and service currently back `cloud.bracketbot.com`?
-- What account, organization, and device-registry concepts already exist there?
+- How should the Supabase organization and space records integrate with any
+  existing `cloud.bracketbot.com` device registry?
 - How is a new robot securely claimed by a user or organization?
 - What credential can be provisioned on the robot at manufacture or setup?
 - Should autonomous navigation continue when a production control session
@@ -319,10 +344,13 @@ priority.
 
 ## Explicitly not decided here
 
-This document does not decide the final cloud technology, deployment topology,
-authentication provider, database, message broker, WebRTC server, UI layout,
-commercial permissions model, safety certification, or delivery schedule. It
-also does not make older sprint labels or mock onboarding behavior permanent.
+This document does not decide the final cloud deployment topology, message
+broker, WebRTC server, UI layout, commercial permissions model, robot
+authentication, safety certification, or delivery schedule. Realtor identity,
+browser authorization data, and accountless visitor access are decided in
+[`REALTOR_GUEST_AUTH_PLAN.md`](REALTOR_GUEST_AUTH_PLAN.md): Supabase Auth,
+Supabase Postgres, and temporary guest invitations respectively. It also does
+not make older sprint labels or mock onboarding behavior permanent.
 
 In particular, the hackathon's room-ID access, in-memory state, JPEG video, and
 hardcoded action registry are disposable shortcuts rather than intended product
