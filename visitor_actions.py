@@ -29,7 +29,7 @@ class ActionRelay:
                 if script in command and b'--visitor-control' in command:
                     self.owned = True
                     write_json(self.path, {'attempt': '', 'until': 0})
-                    self.state = {'phase': 'held', 'reason': 'Policy ready; click the electrical-box circle'}
+                    self.state = {'phase': 'held', 'reason': 'Policy ready; press Run ACT'}
             except (OSError, ValueError, KeyError, TypeError):
                 pass
 
@@ -86,7 +86,7 @@ class ActionRelay:
             self.path.with_suffix('.state.json').unlink(missing_ok=True)
             result = await self.tmux('new-session', '-d', '-s', 'visitor-act', '-c', str(self.root),
                                     str(self.root / '.venv/bin/python'), '-u', str(Path(__file__).parent / 'act_local/live2.py'),
-                                    '--hold-start', '--yes', '--visitor-control', str(self.path))
+                                    '--hold-start', '--yes', '--duration', '0', '--visitor-control', str(self.path))
             if result:
                 self.stop()
                 raise ValueError('Could not start the policy')

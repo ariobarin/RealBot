@@ -5,15 +5,23 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 
 const mocks = vi.hoisted(() => ({
-  session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(),
+  session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(),
 }))
 vi.mock('../lib/visitorSession', () => ({ requestVisitorSession: mocks.session, visitorAccessCode: () => '' }))
 vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
   changed: (view: unknown) => void
-  constructor(changed: (view: unknown) => void) { this.changed = changed }
-  async connect() { this.changed({ connection: 'connected', robotOnline: true }) }
+  actions: (view: unknown) => void
+  constructor(changed: (view: unknown) => void, _map: unknown, _freecam: unknown, actions: (view: unknown) => void) {
+    this.changed = changed
+    this.actions = actions
+  }
+  async connect() {
+    this.changed({ connection: 'connected', robotOnline: true })
+    this.actions({ points: [], state: { available: true, owned: false, phase: 'idle', attempt: '' } })
+  }
   disconnect() {}
-  stopAction() {}
+  startAction = mocks.startAction
+  stopAction = mocks.stopAction
   readActionPoints = mocks.snapshot
 } }))
 vi.mock('../components/control/RemoteFreeCam', () => ({ RemoteFreeCam: () => null }))
@@ -23,6 +31,25 @@ beforeAll(async () => {
   vi.stubEnv('PROD', true)
   vi.stubEnv('VITE_ROBOT_TRANSPORT', 'livekit')
   RobotCameraPanel = (await import('./SshCameraPage')).RobotCameraPanel
+})
+
+it('runs ACT from the button without a waypoint and keeps Stop available during startup', async () => {
+  mocks.session.mockResolvedValue({ roomId: '0188', robotRole: 'act' })
+  let finish!: () => void
+  mocks.startAction.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+  render(<MemoryRouter><RobotCameraPanel setup /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Robot access code'), { target: { value: '0188' } })
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }))
+  const run = await screen.findByRole('button', { name: 'Run ACT' })
+  expect(mocks.startAction).not.toHaveBeenCalled()
+  fireEvent.click(run)
+  fireEvent.click(run)
+  expect(mocks.startAction).toHaveBeenCalledExactlyOnceWith('policy:electric_box')
+  expect(screen.getByRole('dialog', { name: 'Right-arm camera' })).toBeTruthy()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Stop / hold' })[0])
+  expect(mocks.stopAction).toHaveBeenCalledOnce()
+  finish()
+  await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false))
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks() })
 

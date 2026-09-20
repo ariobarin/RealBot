@@ -100,7 +100,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         <div>
           <h1 className="text-2xl font-semibold">{connectedRobot || roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
           <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.'
-            : actions?.state.available ? 'Position at the box, then click its circle to open it. Stop when it opens.'
+            : actions?.state.available ? 'Position at the box, then press Run ACT. Press Stop / hold when it opens.'
               : 'Saved action locations appear in the camera view.'}</p>
         </div>
         {!embedded && !setup && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
@@ -144,8 +144,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
               className="w-[200%] max-w-none"
             />}
             {livekit && <ActionLocations client={client} view={actions}
-              disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera}
-              onStart={() => { setArmCameraOpen(true); setDriving(false); setDriveStatus('Drive stopped for arm action') }} />}
+              disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera} />}
             {livekit && !view.camera && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-white">
               <p>{view.error || 'Connecting camera…'}</p>
               {view.error && <button className="rounded-lg border px-4 py-2" onClick={() => {
@@ -164,7 +163,8 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         className="mt-2 self-end rounded-xl border border-line px-4 py-2 text-sm"
         onClick={() => setArmCameraOpen(true)}>Right-arm camera</button>}
       {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 items-center gap-3 text-sm">
-        <p role="status">{actions?.state.available ? 'Click the electrical-box circle to run. The base stays stationary.' : 'Connecting action controls…'}</p>
+        <p role="status">{actionPending ? 'Starting ACT…' : actions?.state.reason || (actions?.state.available
+          ? 'Run ACT starts the arms. Stop / hold pauses them. The base stays stationary.' : 'Connecting action controls…')}</p>
         <button className="rounded-xl border border-line px-5 py-2" onClick={() => client.stopAction()}>Stop / hold</button>
         <button className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
           disabled={actionPending || !view.robotOnline || !actions?.state.available || ['running', 'loading', 'error'].includes(actions.state.phase)}
