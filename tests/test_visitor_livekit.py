@@ -8,11 +8,37 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'edge_agent'))
 from visitor_livekit import KeyboardRelay
+from visitor_livekit import right_camera_frame
 
 
 def packet(sequence=1, nonce='current', expires=None):
     return json.dumps(dict(keys='w', shift=False, nonce=nonce, sequence=sequence,
                            expiresAt=expires or int(time.time() * 1000) + 400)).encode()
+
+
+def test_right_camera_rejects_stale_missing_and_invalid_frames():
+    import cv2
+    import numpy as np
+
+    _, jpeg = cv2.imencode('.jpg', np.full((16, 20, 3), (10, 50, 200), np.uint8))
+    data = np.zeros((), dtype=[('timestamp', 'datetime64[ns]'), ('jpeg_len', 'i4'),
+                              ('jpeg', 'u1', (len(jpeg),))])
+    data['timestamp'], data['jpeg_len'], data['jpeg'] = np.datetime64(time.time_ns(), 'ns'), len(jpeg), jpeg.ravel()
+
+    class Reader:
+        ready = lambda self: True
+    reader = Reader()
+    reader.data = data
+    frame = right_camera_frame(reader)
+    assert frame.shape == (16, 20, 3)
+    assert frame[0, 0, 0] > frame[0, 0, 2]  # JPEG BGR converted to RGB.
+    data['timestamp'] = np.datetime64(time.time_ns() - 1_000_000_000, 'ns')
+    assert right_camera_frame(reader) is None
+    data['timestamp'] = np.datetime64(time.time_ns(), 'ns')
+    data['jpeg_len'] = len(jpeg) + 1
+    assert right_camera_frame(reader) is None
+    reader.ready = lambda: False
+    assert right_camera_frame(reader) is None
 
 
 def test_only_current_controller_session_and_fresh_sequence_are_forwarded():

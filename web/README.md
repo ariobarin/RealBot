@@ -197,3 +197,12 @@ to render the original 3D scan instead of extruded occupancy-grid walls.
 
 Preset: `small-house` from
 [aws-robotics/aws-robomaker-small-house-world](https://github.com/aws-robotics/aws-robomaker-small-house-world) (MIT).
+# ACT right-arm camera
+
+ACT controls include a **Right-arm camera** popup, opened when starting an action
+or from its camera button. It keeps the main camera visible and offers Stop / hold;
+closing the popup only closes the view. It never enters Free Cam or moves the arm.
+
+The matching `visitor_livekit.py` publishes `camera.right.jpeg` as `cam-right`
+with freshness telemetry. Both the web app and robot publisher need this version;
+until the publisher is updated, the popup reports that video is unavailable.

@@ -4,6 +4,7 @@ import { PageShell } from '../components/ui/PageShell'
 import { FreeCamButton } from '../components/control/FreeCamButton'
 import { RemoteFreeCam } from '../components/control/RemoteFreeCam'
 import { ActionLocations } from '../components/control/ActionLocations'
+import { ArmCameraPopup } from '../components/control/ArmCameraPopup'
 import { startKeyboardDrive } from '../lib/keyboardDrive'
 import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
 import { VisitorLiveKit, type ActionView, type FreeCamState } from '../lib/visitorLiveKit'
@@ -35,11 +36,13 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const [actions, setActions] = useState<ActionView | null>(null)
   const [actionPending, setActionPending] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [armCameraOpen, setArmCameraOpen] = useState(false)
   const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
   const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
   const readActionPoints = useCallback(() => client.readActionPoints(), [client])
   async function runPolicy() {
+    setArmCameraOpen(true)
     setActionPending(true)
     setActionError('')
     try { await client.startAction('policy:electric_box') }
@@ -92,7 +95,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   }, [driving, client])
 
   return (
-    <section aria-label={`Robot ${roomId}`} className="flex min-h-0 flex-1 flex-col">
+    <section aria-label={`Robot ${roomId}`} className="relative flex min-h-0 flex-1 flex-col">
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{connectedRobot || roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
@@ -142,7 +145,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
             />}
             {livekit && <ActionLocations client={client} view={actions}
               disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera}
-              onStart={() => { setDriving(false); setDriveStatus('Drive stopped for arm action') }} />}
+              onStart={() => { setArmCameraOpen(true); setDriving(false); setDriveStatus('Drive stopped for arm action') }} />}
             {livekit && !view.camera && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-white">
               <p>{view.error || 'Connecting camera…'}</p>
               {view.error && <button className="rounded-lg border px-4 py-2" onClick={() => {
@@ -155,6 +158,11 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
           </div>
         </div>
       )}
+      {armCameraOpen && <ArmCameraPopup track={view.rightCamera} fresh={!!view.rightCameraFresh && view.robotOnline}
+        onClose={() => setArmCameraOpen(false)} onStop={() => client.stopAction()} />}
+      {livekit && (robotRole === 'act' || actions?.state.available) && <button
+        className="mt-2 self-end rounded-xl border border-line px-4 py-2 text-sm"
+        onClick={() => setArmCameraOpen(true)}>Right-arm camera</button>}
       {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 items-center gap-3 text-sm">
         <p role="status">{actions?.state.available ? 'Click the electrical-box circle to run. The base stays stationary.' : 'Connecting action controls…'}</p>
         <button className="rounded-xl border border-line px-5 py-2" onClick={() => client.stopAction()}>Stop / hold</button>

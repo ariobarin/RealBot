@@ -138,6 +138,46 @@ async def camera(room, http, media, relay, freecam=None, actions=None, controlle
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def right_camera_frame(reader):
+    if not reader.ready():
+        return None
+    data = reader.data.copy()
+    if not 0 <= time.time_ns() - int(data['timestamp'].astype('int64')) < 500_000_000:
+        return None
+    length = int(data['jpeg_len'])
+    if not 0 < length <= len(data['jpeg']):
+        return None
+    frame = cv2.imdecode(np.frombuffer(bytes(data['jpeg'][:length]), np.uint8), cv2.IMREAD_COLOR)
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if frame is not None else None
+
+
+async def right_camera(room, media, controller):
+    from bbos import Reader
+
+    frames = queue.Queue(maxsize=1)
+    publisher = None
+    size = None
+    try:
+        with Reader('camera.right.jpeg', keeptime=False) as reader:
+            while True:
+                frame = right_camera_frame(reader)
+                if frame is not None:
+                    if size is None:
+                        size = (frame.shape[1], frame.shape[0])
+                    media.push_queue(frames, cv2.resize(frame, size))
+                    if publisher is None:
+                        publisher = asyncio.create_task(media.publish_feed(room, frames, 'cam-right'))
+                    if publisher.done():
+                        publisher.result()
+                await room.local_participant.publish_data(json.dumps({'fresh': frame is not None}),
+                    reliable=False, topic='realbot.right_camera', destination_identities=[controller])
+                await asyncio.sleep(.1)
+    finally:
+        if publisher:
+            publisher.cancel()
+            await asyncio.gather(publisher, return_exceptions=True)
+
+
 async def maps(room, http, controller):
     while True:
         if controller in room.remote_participants:
@@ -268,6 +308,7 @@ async def run(config, freecam_path=None, stationary=False):
             print('LiveKit connected; publishing annotated left camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
                 tasks = [asyncio.create_task(camera(room, http, media, relay, freecam, actions, config.controller)),
+                         asyncio.create_task(right_camera(room, media, config.controller)),
                          asyncio.create_task(maps(room, http, config.controller)),
                          asyncio.create_task(state()), asyncio.create_task(shutdown.wait())]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
