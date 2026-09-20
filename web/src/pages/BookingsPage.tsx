@@ -74,9 +74,11 @@ export function BookingsPage() {
                   ? 'When a visitor reserves a slot on one of your spaces it shows up here.'
                   : 'Pick a listing under Open tours and reserve a slot. It only takes a name and an email.'}
               </p>
-              <Button variant="secondary" className="mt-2" onClick={() => void navigate('/#open-tours')}>
-                Browse open tours
-              </Button>
+              {!realtor && (
+                <Button variant="secondary" className="mt-2" onClick={() => void navigate('/#open-tours')}>
+                  Browse open tours
+                </Button>
+              )}
             </div>
           ) : (
             <motion.ul
