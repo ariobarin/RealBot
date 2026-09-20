@@ -125,9 +125,10 @@ interface MapHudProps {
   summary: MapSummary
   grid: GridMap
   onOpenViewing: () => void
+  onSetupActions: () => void
 }
 
-export function MapHud({ summary, grid, onOpenViewing }: MapHudProps) {
+export function MapHud({ summary, grid, onOpenViewing, onSetupActions }: MapHudProps) {
   const mode = useViewStore((s) => s.mode)
   const setMode = useViewStore((s) => s.setMode)
   const resetView = useViewStore((s) => s.resetView)
@@ -159,11 +160,10 @@ export function MapHud({ summary, grid, onOpenViewing }: MapHudProps) {
       >
         <button
           type="button"
-          disabled
-          title="Coming in the next sprint"
+          onClick={onSetupActions}
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-ink-2 disabled:cursor-not-allowed ${glass}`}
         >
-          <Mic size={16} /> Dictate interactables
+          <Mic size={16} /> Add action items
         </button>
         <button
           type="button"

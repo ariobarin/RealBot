@@ -15,7 +15,7 @@ test('map view loads the SLAM grid with HUD, legend and view controls', async ({
   await expect(page.getByRole('heading', { name: 'Small House' })).toBeVisible()
   await expect(page.getByText('158 m²')).toBeVisible()
   await expect(page.getByText('SLAM · 5 cm')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Dictate interactables' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Add action items' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Open for viewing' })).toBeVisible()
 
   const toggle = page.getByTestId('mode-toggle')
@@ -24,8 +24,10 @@ test('map view loads the SLAM grid with HUD, legend and view controls', async ({
   await expect(toggle.getByRole('radio', { name: '2D' })).toHaveAttribute('aria-checked', 'true')
   await page.getByTestId('reset-view').click()
 
-  await page.getByRole('link', { name: /Your spaces/ }).click()
-  await expect(page).toHaveURL('/realtor')
+  await page.getByRole('button', { name: 'Add action items' }).click()
+  await expect(page).toHaveURL('/realtor/control/small-house')
+  await expect(page.locator('summary', { hasText: 'Action points' })).toBeVisible()
+  await expect(page.getByTestId('visitor-minimap')).toBeVisible()
 })
 
 test('open for viewing starts the realtor scheduling flow', async ({ page }) => {

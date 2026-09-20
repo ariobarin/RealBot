@@ -20,11 +20,11 @@ const DualRobotPage = lazy(() => import('./pages/DualRobotPage').then((m) => ({ 
 const sshCameraEnabled = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
   || (import.meta.env.DEV && import.meta.env.VITE_ROBOT_TRANSPORT === 'ssh')
 
-function VisitorControl() {
+function VisitorControl({ setup = false }: { setup?: boolean }) {
   const { roomId } = useParams()
-  if (sshCameraEnabled && roomId === 'both') return <DualRobotPage />
-  if (sshCameraEnabled) return <SshCameraPage />
-  return import.meta.env.VITE_ROBOT_TRANSPORT === 'relay' ? <ControlPage view="user" /> : <LiveDrivePage />
+  if (sshCameraEnabled && roomId === 'both' && !setup) return <DualRobotPage />
+  if (sshCameraEnabled) return <SshCameraPage setup={setup} />
+  return import.meta.env.VITE_ROBOT_TRANSPORT === 'relay' ? <ControlPage view="user" setup={setup} /> : <LiveDrivePage setup={setup} />
 }
 
 function RequireAuth({ role, children }: { role: 'realtor' | 'visitor'; children: ReactNode }) {
@@ -90,7 +90,7 @@ export default function App() {
           element={
             <Suspense fallback={null}>
               <RequireAuth role="realtor">
-                <ControlPage view="realtor" />
+                <VisitorControl setup />
               </RequireAuth>
             </Suspense>
           }

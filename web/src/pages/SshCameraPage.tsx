@@ -9,14 +9,15 @@ import { VisitorLiveKit, type ActState, type FreeCamState } from '../lib/visitor
 import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
 import { requestVisitorSession, visitorAccessCode } from '../lib/visitorSession'
+import { ActionPointsPanel } from '../components/control/ActionPointsPanel'
 
 const livekit = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
 
-export function SshCameraPage() {
-  return <PageShell wide viewport><RobotCameraPanel /></PageShell>
+export function SshCameraPage({ setup = false }: { setup?: boolean }) {
+  return <PageShell wide viewport><RobotCameraPanel setup={setup} /></PageShell>
 }
 
-export function RobotCameraPanel({ robotId, embedded = false }: { robotId?: string; embedded?: boolean }) {
+export function RobotCameraPanel({ robotId, embedded = false, setup = false }: { robotId?: string; embedded?: boolean; setup?: boolean }) {
   const params = useParams()
   const roomId = robotId || params.roomId
   const [accessCode, setAccessCode] = useState(visitorAccessCode)
@@ -93,9 +94,10 @@ export function RobotCameraPanel({ robotId, embedded = false }: { robotId?: stri
           <h1 className="text-2xl font-semibold">{roomId} · {viewingHand ? 'Right-hand Free Cam' : robotRole === 'act' ? 'Stationary ACT' : 'Driving / Free Cam'}</h1>
           <p className="mt-1 text-sm text-ink-2">{robotRole === 'act' ? 'Electrical-box policy. Base driving is disabled.' : viewingHand ? 'Move the camera with coordinated arm control.' : 'Saved action locations appear in the camera view.'}</p>
         </div>
-        {!embedded && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
-        {!embedded && <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>}
+        {!embedded && !setup && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
+        {!embedded && <Link to={setup ? '/realtor' : '/'} className="text-sm underline underline-offset-4">{setup ? 'Your spaces' : 'Leave tour'}</Link>}
       </header>
+      {setup && roomId && <ActionPointsPanel key={roomId} roomId={roomId} />}
       {livekit && import.meta.env.PROD && !accessCode ? (
         <form className="m-auto flex w-full max-w-sm flex-col gap-4" onSubmit={(event) => {
           event.preventDefault()
