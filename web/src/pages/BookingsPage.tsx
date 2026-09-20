@@ -95,7 +95,7 @@ export function BookingsPage() {
                     className="flex items-center gap-5 rounded-[20px] border border-line bg-white p-4"
                   >
                     <div className="h-[104px] w-[148px] shrink-0 overflow-hidden rounded-xl bg-bg-soft">
-                      <PlanThumb variant={b.plan} live={p === 'soon'} />
+                      <PlanThumb mapId={b.mapId} name={b.name} robot={b.robot} live={p === 'soon'} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="flex items-baseline gap-2.5">

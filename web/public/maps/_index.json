@@ -32,5 +32,25 @@
     "rooms": 1,
     "scannedAt": "2026-09-19T00:00:00Z",
     "status": "ready"
+  },
+  {
+    "id": "bookstore",
+    "name": "Bookstore",
+    "thumb": "/maps/bookstore/thumb.png",
+    "grid": "/maps/bookstore/map.grid.json",
+    "areaM2": 155,
+    "rooms": 3,
+    "scannedAt": "2026-09-19T00:00:00Z",
+    "status": "ready"
+  },
+  {
+    "id": "tb3-house",
+    "name": "TurtleBot3 House",
+    "thumb": "/maps/tb3-house/thumb.png",
+    "grid": "/maps/tb3-house/map.grid.json",
+    "areaM2": 89,
+    "rooms": 4,
+    "scannedAt": "2026-09-19T00:00:00Z",
+    "status": "ready"
   }
 ]

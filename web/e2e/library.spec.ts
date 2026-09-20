@@ -8,11 +8,13 @@ test('library shows the scanned and preset SLAM maps with an add card', async ({
   await expect(page.getByRole('heading', { name: 'Your spaces' })).toBeVisible()
 
   const cards = page.getByTestId('map-card')
-  await expect(cards).toHaveCount(3)
+  await expect(cards).toHaveCount(5)
   await expect(cards.first()).toContainText('Bracketbot Scan')
   await expect(cards.first()).toContainText('3D scan')
   await expect(cards.nth(1)).toContainText('Small House')
   await expect(cards.nth(2)).toContainText('TurtleBot3 Sandbox')
+  await expect(cards.nth(3)).toContainText('Bookstore')
+  await expect(cards.nth(4)).toContainText('TurtleBot3 House')
   await expect(cards.first().getByRole('img')).toHaveAttribute('alt', /SLAM floor plan/)
 
   await expect(page.getByTestId('add-card')).toHaveAttribute('href', '/onboard')
