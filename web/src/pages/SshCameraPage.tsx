@@ -48,7 +48,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
   const readActionPoints = useCallback(() => client.readActionPoints(), [client])
   async function runScript(script: 'init' | 'go' | 'stop', label: string) {
-    if (script !== 'stop') setArmCameraOpen(true)
+    // The right-arm camera stays where the operator put it; a run never opens it for them.
     setActionPending(true)
     setActionError('')
     setScriptStatus(script === 'init'

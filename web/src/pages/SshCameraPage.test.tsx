@@ -51,12 +51,12 @@ it('runs the three demo scripts from the panel and keeps Stop available during a
   finish({ reason: 'READY: teleop homed, policy loaded' })
   await waitFor(() => expect((init as HTMLButtonElement).disabled).toBe(false))
 
-  // Go opens the wrist camera, and a double click cannot start two attempts.
+  // A double click cannot start two attempts, and no run opens the arm camera by itself.
   fireEvent.click(go)
   fireEvent.click(go)
   expect(mocks.runScript).toHaveBeenLastCalledWith('go')
   expect(mocks.runScript).toHaveBeenCalledTimes(2)
-  expect(screen.getByRole('dialog', { name: 'Right-arm camera' })).toBeTruthy()
+  expect(screen.queryByRole('dialog', { name: 'Right-arm camera' })).toBeNull()
 
   // Stop stays clickable while Go is still in flight.
   fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
