@@ -8,6 +8,7 @@ the robot (the Jetson is `bracketbot@192.168.2.29`; key auth is set up from Davi
 | `ssh bracketbot@192.168.2.29 '~/act-local/demo.sh'` | **Init (fresh).** Parks anything holding the arms, loads the policy (~25 s), homes, ramps to the demo start pose, runs one attempt. |
 | `ssh bracketbot@192.168.2.29 '~/act-local/demo.sh guided'` | **Init (guided).** Starts Quest teleop and a pre-loaded policy waiting for handoff. |
 | `ssh bracketbot@192.168.2.29 '~/act-local/go.sh'` | **Go.** Teleop running: kills it in place and starts the policy from that pose. Otherwise: ramps back to the demo start pose and runs a fresh attempt. `go.sh here` restarts from the current pose instead. |
+| `ssh bracketbot@192.168.2.29 '~/act-local/new_start_2.sh'` | **Retry in place.** Restarts the attempt from wherever the arm is: no homing, no ramp back to the start pose. |
 | `ssh bracketbot@192.168.2.29 '~/act-local/stop.sh'` | **Stop.** Pauses the policy and holds the pose, torque on. |
 | `ssh bracketbot@192.168.2.29 '~/act-local/stop.sh park'` | Parks the arms and exits the policy session. Use at the end. |
 | `ssh bracketbot@192.168.2.29 '~/act-local/stop.sh estop'` | Cuts torque immediately. |
