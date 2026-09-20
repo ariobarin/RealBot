@@ -3,27 +3,15 @@ import { Canvas } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
 import { ColoredPointCloud } from './ScanPointCloud'
 import { RobotMarker } from './RobotMarker'
+import { mapCloud, type MapSnapshot } from '../../lib/liveSlamMap'
 
-export interface MapSnapshot {
-  positions: number[]
-  colors: number[]
-  pointSize: number
-  totalPoints: number
-  robot: { x: number; y: number; heading: number }
-}
-
-type MapCloud = Omit<MapSnapshot, 'positions' | 'colors'> & {
-  positions: Float32Array
-  colors: Uint8Array
-}
+export type { MapSnapshot } from '../../lib/liveSlamMap'
 
 export function LiveSlamMap({ snapshot }: { snapshot?: MapSnapshot | null }) {
-  const [polled, setCloud] = useState<MapCloud | null>(null)
+  const [polled, setCloud] = useState<ReturnType<typeof mapCloud> | null>(null)
   const [error, setError] = useState('')
   const external = snapshot !== undefined
-  const cloud = useMemo(() => external ? snapshot ? {
-    ...snapshot, positions: new Float32Array(snapshot.positions), colors: new Uint8Array(snapshot.colors),
-  } : null : polled, [external, snapshot, polled])
+  const cloud = useMemo(() => external ? snapshot ? mapCloud(snapshot) : null : polled, [external, snapshot, polled])
   useEffect(() => {
     if (external) return
     const abort = new AbortController()
@@ -37,7 +25,7 @@ export function LiveSlamMap({ snapshot }: { snapshot?: MapSnapshot | null }) {
         if (!response.ok) throw new Error(data.detail || 'Map unavailable')
         const snapshot = data as MapSnapshot
         if (!abort.signal.aborted) {
-          setCloud({ ...snapshot, positions: new Float32Array(snapshot.positions), colors: new Uint8Array(snapshot.colors) })
+          setCloud(mapCloud(snapshot))
           setError('')
         }
       } catch (failure) {
