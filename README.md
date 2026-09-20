@@ -8,6 +8,7 @@ Apps use the existing `/home/bracketbot/bbos` installation and `uv`;
 this repository does not include the robot OS or its environment.
 
 - `teleop.py`, `quest_teleop/`: keyboard and headset teleoperation
+- `hand_tracking.py`: MediaPipe tracking for all 21 hand/finger landmarks from both head cameras
 - `examples/`: hardware inspection examples
 - `nav/`, `inference/`: navigation and policy inference
 - `edge_agent/`: RealBot command/workflow orchestration plus thin adapters over authoritative bbOS services
@@ -19,8 +20,29 @@ Run an app from this directory with `uv run <script.py>` after checking its
 hardware requirements. Teleoperation and movement apps command real hardware.
 Credentials belong in local environment variables or ignored `.env` files.
 
+## Hand tracking
+
+`hand_tracking.py` reads the existing `camera.head.jpeg` topic without taking
+camera ownership. It splits the stereo image, runs one MediaPipe tracker per
+camera, and reports all 21 landmarks for up to two hands in each view.
+
+```bash
+uv run hand_tracking.py --port 8006
+```
+
+Open `http://bracketbot-0187.local:8006/` for the annotated stereo preview.
+Machine-readable output is available at `/landmarks`, with concise runtime
+telemetry at `/health`, metric stereo positions at `/stereo`, and the current
+gesture classifications at `/gestures`, action-landmark state and records at
+`/actions`, and the annotated image at `/frame.jpg`. Stereo output is expressed in a rectified
+camera-pair frame with its origin midway between the 61.4609 mm-spaced optical
+centres: X points right, Y down, and Z forward.
+
 ## Planning references
 
+- [`docs/ACTION_LANDMARKING.md`](docs/ACTION_LANDMARKING.md) defines the current
+  isolated, stationary thumbs-up/pointing/voice workflow for recording labelled
+  SLAM-map action locations. It does not use person following or robot motion.
 - [`docs/SINGLE_USER_DEMO.md`](docs/SINGLE_USER_DEMO.md) is the current practical
   connection path: private token generation, existing bbOS camera publisher,
   manually started camera/driving sessions, and no multi-user backend.
