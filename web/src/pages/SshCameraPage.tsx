@@ -28,6 +28,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const [connectionError, setConnectionError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [failed, setFailed] = useState(false)
+  const [released, setReleased] = useState(false)
   const [driving, setDriving] = useState(false)
   const [driveStatus, setDriveStatus] = useState('Enable drive to use WASD')
   const [view, setView] = useState<LiveView>({ connection: 'disconnected', robotOnline: false, telemetryFresh: false })
@@ -55,7 +56,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   }, [])
 
   useEffect(() => {
-    if (!livekit || (import.meta.env.PROD && !accessCode)) return
+    if (!livekit || released || (import.meta.env.PROD && !accessCode)) return
     const abort = new AbortController()
     const connection = client
     const session = import.meta.env.PROD
@@ -81,7 +82,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         }
       })
     return () => { abort.abort(); connection.disconnect() }
-  }, [attempt, accessCode, roomId, setup, client])
+  }, [attempt, accessCode, roomId, setup, released, client])
 
   useEffect(() => {
     if (!view.camera || !video.current) return
@@ -104,17 +105,22 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
               : 'Saved action locations appear in the camera view.'}</p>
         </div>
         {!embedded && !setup && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
+        {setup && livekit && view.robotOnline && <button className="shrink-0 rounded-xl border border-line px-4 py-2"
+          onClick={() => { setDriving(false); setArmCameraOpen(false); setReleased(true); setAccessCode(''); setConnectedRobot('') }}>
+          Stop action points
+        </button>}
         {!embedded && <Link to={setup ? '/realtor' : '/'} className="text-sm underline underline-offset-4">{setup ? 'Your spaces' : 'Leave tour'}</Link>}
       </header>
-      {setup && roomId && (!livekit || view.robotOnline) && <ActionPointsPanel key={`${roomId}/${connectedRobot}`}
-        roomId={roomId} readSnapshot={livekit ? readActionPoints : undefined} />}
-      {livekit && import.meta.env.PROD && !accessCode ? (
+      <div className={setup ? 'grid min-h-0 flex-1 gap-4 overflow-auto lg:grid-cols-[minmax(0,1fr)_20rem]' : 'contents'}>
+      {livekit && (released || (import.meta.env.PROD && !accessCode)) ? (
         <form className="m-auto flex w-full max-w-sm flex-col gap-4" onSubmit={(event) => {
           event.preventDefault()
+          setReleased(false)
           setFailed(false)
           setConnectionError('')
           setAccessCode(String(new FormData(event.currentTarget).get('accessCode') || '').trim())
         }}>
+          {released && <p role="status">Action points stopped. Robot connection released.</p>}
           <label className="text-sm">Robot access code
             <input name="accessCode" type="password" required autoComplete="off"
               className="mt-2 block w-full rounded-xl border border-line p-3" />
@@ -134,7 +140,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
           }}>Change access code</button>}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">
+        <div className={`flex ${setup ? 'min-h-64' : 'min-h-0'} flex-1 items-center justify-center [container-type:size]`}>
           <div className="relative aspect-[4/3] w-[min(100cqw,133.333cqh)] overflow-hidden rounded-2xl bg-black">
             {livekit ? <video ref={video} autoPlay playsInline muted className="h-full w-full object-contain" /> : <img
               key={attempt}
@@ -157,6 +163,11 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
           </div>
         </div>
       )}
+      {setup && roomId && (!livekit || view.robotOnline) && <aside className="min-h-0 overflow-auto">
+        <ActionPointsPanel key={`${roomId}/${connectedRobot}`} roomId={roomId}
+          readSnapshot={livekit ? readActionPoints : undefined} />
+      </aside>}
+      </div>
       {armCameraOpen && <ArmCameraPopup track={view.rightCamera} fresh={!!view.rightCameraFresh && view.robotOnline}
         onClose={() => setArmCameraOpen(false)} onStop={() => client.stopAction()} />}
       {livekit && (robotRole === 'act' || actions?.state.available) && <button

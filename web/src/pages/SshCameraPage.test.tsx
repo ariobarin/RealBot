@@ -5,7 +5,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 
 const mocks = vi.hoisted(() => ({
-  session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(),
+  session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(),
 }))
 vi.mock('../lib/visitorSession', () => ({ requestVisitorSession: mocks.session, visitorAccessCode: () => '' }))
 vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
@@ -19,7 +19,7 @@ vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
     this.changed({ connection: 'connected', robotOnline: true })
     this.actions({ points: [], state: { available: true, owned: false, phase: 'idle', attempt: '' } })
   }
-  disconnect() {}
+  disconnect() { mocks.disconnect(); this.changed({ connection: 'disconnected', robotOnline: false }) }
   startAction = mocks.startAction
   stopAction = mocks.stopAction
   readActionPoints = mocks.snapshot
@@ -71,4 +71,10 @@ it('setup selects a robot by code and reads its recorder without treating the sa
   expect(screen.getByRole('link', { name: 'View saved room map' }).getAttribute('href')).toBe('/map/saved-room')
   expect(mocks.snapshot).toHaveBeenCalled()
   expect(mocks.fetch).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Stop action points' }))
+  await waitFor(() => expect(mocks.disconnect).toHaveBeenCalledOnce())
+  expect(screen.queryByText('Action points')).toBeNull()
+  expect(screen.getByText('Action points stopped. Robot connection released.')).toBeTruthy()
+  expect(screen.getByLabelText('Robot access code')).toBeTruthy()
+  expect(mocks.session).toHaveBeenCalledTimes(1)
 })

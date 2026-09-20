@@ -84,7 +84,7 @@ export function ActionPointsPanel({ roomId, readSnapshot }: { roomId: string; re
     >
       <summary className="cursor-pointer font-semibold">Action points</summary>
       {open && (
-        <div className="mt-3 grid max-h-[45vh] gap-5 overflow-auto lg:grid-cols-2">
+        <div className={`mt-3 grid max-h-[45vh] gap-5 overflow-auto ${readSnapshot ? '' : 'lg:grid-cols-2'}`}>
           <div>
             <p className="text-sm text-ink-2">
               Stop the robot. Show a thumbs-up within one metre, point at the object, then say “light switch”
