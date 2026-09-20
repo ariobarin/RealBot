@@ -3,27 +3,15 @@ import { Canvas } from '@react-three/fiber'
 import { useEffect, useMemo, useState } from 'react'
 import { ColoredPointCloud } from './ScanPointCloud'
 import { RobotMarker } from './RobotMarker'
+import { mapCloud, type MapSnapshot } from '../../lib/liveSlamMap'
 
-export interface MapSnapshot {
-  positions: number[]
-  colors: number[]
-  pointSize: number
-  totalPoints: number
-  robot: { x: number; y: number; heading: number }
-}
-
-type MapCloud = Omit<MapSnapshot, 'positions' | 'colors'> & {
-  positions: Float32Array
-  colors: Uint8Array
-}
+export type { MapSnapshot } from '../../lib/liveSlamMap'
 
 export function LiveSlamMap({ snapshot }: { snapshot?: MapSnapshot | null }) {
-  const [polled, setCloud] = useState<MapCloud | null>(null)
+  const [polled, setCloud] = useState<ReturnType<typeof mapCloud> | null>(null)
   const [error, setError] = useState('')
   const external = snapshot !== undefined
-  const cloud = useMemo(() => external ? snapshot ? {
-    ...snapshot, positions: new Float32Array(snapshot.positions), colors: new Uint8Array(snapshot.colors),
-  } : null : polled, [external, snapshot, polled])
+  const cloud = useMemo(() => external ? snapshot ? mapCloud(snapshot) : null : polled, [external, snapshot, polled])
   useEffect(() => {
     if (external) return
     const abort = new AbortController()
@@ -37,7 +25,7 @@ export function LiveSlamMap({ snapshot }: { snapshot?: MapSnapshot | null }) {
         if (!response.ok) throw new Error(data.detail || 'Map unavailable')
         const snapshot = data as MapSnapshot
         if (!abort.signal.aborted) {
-          setCloud({ ...snapshot, positions: new Float32Array(snapshot.positions), colors: new Uint8Array(snapshot.colors) })
+          setCloud(mapCloud(snapshot))
           setError('')
         }
       } catch (failure) {
@@ -50,9 +38,11 @@ export function LiveSlamMap({ snapshot }: { snapshot?: MapSnapshot | null }) {
     return () => { abort.abort(); clearTimeout(timer) }
   }, [external])
 
+  const status = error || (!cloud ? 'Waiting for SLAM data' : !cloud.positions.length ? 'No map points yet' : '')
   return (
     <section aria-label="Live SLAM map" className="relative h-full w-full overflow-hidden">
-      {cloud && !error && (
+      {status && <p role="status" className="flex h-full items-center justify-center p-4 text-center text-xs text-white drop-shadow-md">{status}</p>}
+      {cloud && !status && (
         <Canvas camera={{ position: [5, 5, 5], fov: 50 }} dpr={[1, 1.5]} gl={{ alpha: true }}>
           <ambientLight intensity={2} />
           <Bounds fit clip margin={1.3}>

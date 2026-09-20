@@ -46,6 +46,18 @@ async function setup() {
 describe('LiveKit visitor driving', () => {
   afterEach(() => vi.useRealTimers())
 
+  it('subscribes to the selected robot right camera without subscribing to another robot', async () => {
+    const s = await setup()
+    const right = { kind: 'video', trackName: 'cam-right', setSubscribed: vi.fn() }
+    const other = { ...right, setSubscribed: vi.fn() }
+    s.robot.trackPublications.set('right', right)
+    s.room.remoteParticipants.set('other', { ...s.robot, identity: 'other', trackPublications: new Map([['right', other]]) })
+    s.emit(RoomEvent.TrackPublished)
+    expect(right.setSubscribed).toHaveBeenLastCalledWith(true)
+    expect(other.setSubscribed).toHaveBeenLastCalledWith(false)
+    s.client.disconnect()
+  })
+
   it('sends direct live-video clicks as preview, never move, in preview-only mode', async () => {
     const s = await setup()
     s.receive({ type: 'state', ready: true, lease: true, canCapture: true, canClick: true, busy: false, previewOnly: true })

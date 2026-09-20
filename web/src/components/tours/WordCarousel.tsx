@@ -18,7 +18,7 @@ const WINDOW = 1
 export function WordCarousel({
   words = PLACE_WORDS,
   fontSize = 52,
-  className = '',
+  className = 'inline-block',
 }: {
   words?: string[]
   /** Pixels. The row is 1.25× this so ascenders and descenders stay inside their own row. */
@@ -32,7 +32,6 @@ export function WordCarousel({
   const list = [...words, words[0]]
 
   useEffect(() => {
-    if (reduced) return
     const id = window.setInterval(() => {
       setIndex((i) => {
         if (i + 1 < list.length) return i + 1
@@ -42,7 +41,7 @@ export function WordCarousel({
       })
     }, HOLD_MS)
     return () => window.clearInterval(id)
-  }, [reduced, list.length])
+  }, [list.length])
 
   useEffect(() => {
     if (!snap) return
@@ -55,7 +54,7 @@ export function WordCarousel({
 
   return (
     <span
-      className={`relative inline-block overflow-hidden align-middle ${className}`}
+      className={`relative overflow-hidden align-middle ${className}`}
       style={{ height, fontSize }}
       aria-live="off"
     >
@@ -63,7 +62,7 @@ export function WordCarousel({
         className="block"
         style={{ paddingTop: (height - row) / 2 }}
         animate={{ y: -index * row }}
-        transition={snap ? { duration: 0 } : { duration: MOVE_S, ease: EASE_OUT }}
+        transition={snap || reduced ? { duration: 0 } : { duration: MOVE_S, ease: EASE_OUT }}
       >
         {list.map((word, i) => (
           <span

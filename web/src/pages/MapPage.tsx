@@ -52,6 +52,7 @@ export function MapPage() {
               summary={summary}
               grid={grid}
               onOpenViewing={() => void navigate(`/map/${encodeURIComponent(mapId)}/viewing`)}
+              onSetupActions={() => void navigate(`/realtor/control/${encodeURIComponent(mapId)}`)}
             />
           </>
         )}

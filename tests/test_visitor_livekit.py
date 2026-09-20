@@ -8,11 +8,37 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'edge_agent'))
 from visitor_livekit import KeyboardRelay
+from visitor_livekit import right_camera_frame
 
 
 def packet(sequence=1, nonce='current', expires=None):
     return json.dumps(dict(keys='w', shift=False, nonce=nonce, sequence=sequence,
                            expiresAt=expires or int(time.time() * 1000) + 400)).encode()
+
+
+def test_right_camera_rejects_stale_missing_and_invalid_frames():
+    import cv2
+    import numpy as np
+
+    _, jpeg = cv2.imencode('.jpg', np.full((16, 20, 3), (10, 50, 200), np.uint8))
+    data = np.zeros((), dtype=[('timestamp', 'datetime64[ns]'), ('jpeg_len', 'i4'),
+                              ('jpeg', 'u1', (len(jpeg),))])
+    data['timestamp'], data['jpeg_len'], data['jpeg'] = np.datetime64(time.time_ns(), 'ns'), len(jpeg), jpeg.ravel()
+
+    class Reader:
+        ready = lambda self: True
+    reader = Reader()
+    reader.data = data
+    frame = right_camera_frame(reader)
+    assert frame.shape == (16, 20, 3)
+    assert frame[0, 0, 0] > frame[0, 0, 2]  # JPEG BGR converted to RGB.
+    data['timestamp'] = np.datetime64(time.time_ns() - 1_000_000_000, 'ns')
+    assert right_camera_frame(reader) is None
+    data['timestamp'] = np.datetime64(time.time_ns(), 'ns')
+    data['jpeg_len'] = len(jpeg) + 1
+    assert right_camera_frame(reader) is None
+    reader.ready = lambda: False
+    assert right_camera_frame(reader) is None
 
 
 def test_only_current_controller_session_and_fresh_sequence_are_forwarded():
@@ -63,3 +89,37 @@ def test_timeout_or_stop_closes_local_control_and_invalidates_old_packets(timeou
         relay.receive('controller', packet(sequence=2))
         assert relay.commands.empty()
     asyncio.run(run())
+
+def test_action_points_snapshot_is_scoped_and_read_only(monkeypatch):
+    import httpx
+    from visitor_livekit import read_action_points
+    requests = []
+    snapshot = {'recording': {'state': 'idle', 'message': 'Ready'}, 'landmarks': []}
+    def handler(request):
+        requests.append((request.method, str(request.url)))
+        return httpx.Response(200, json=snapshot)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(handler)))
+    with pytest.raises(ValueError, match='Unauthorized'):
+        asyncio.run(read_action_points('controller', 'stranger'))
+    assert requests == []
+    assert json.loads(asyncio.run(read_action_points('controller', 'controller'))) == snapshot
+    assert requests == [('GET', 'http://127.0.0.1:8006/actions')]
+
+
+def test_only_controller_can_enable_setup_tracking(monkeypatch):
+    import httpx
+    from visitor_livekit import enable_setup_camera
+    requests = []
+    def handler(request):
+        requests.append((request.method, str(request.url)))
+        return httpx.Response(200, json={'active': True})
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(handler)))
+    with pytest.raises(ValueError, match='Unauthorized'):
+        asyncio.run(enable_setup_camera('controller', 'stranger'))
+    assert requests == []
+    assert asyncio.run(enable_setup_camera('controller', 'controller')) == '{}'
+    assert requests == [('POST', 'http://127.0.0.1:8006/tracking')]

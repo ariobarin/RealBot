@@ -62,6 +62,7 @@ export interface ViewerSession {
   url: string
   token: string
   robotIdentity: string
+  cameraTrack?: 'cam-wrist' | 'cam-setup'
 }
 
 export function parseViewerSession(v: unknown): ViewerSession {

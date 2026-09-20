@@ -60,10 +60,10 @@ export function LibraryPage() {
           <div className="icon-hover flex items-start gap-4 rounded-[20px] bg-bg-soft p-5">
             <HouseIcon size={64} />
             <div className="min-w-0">
-              <p className="text-[15px] font-bold">Scan once, tour forever</p>
+              <p className="text-[15px] font-bold">Start with your scanned room</p>
               <p className="mt-1 text-[14px] leading-relaxed text-ink-2">
-                Set the bracketbot inside the front door and press Start. It maps the whole floor on its own;
-                the plan shows up here when it's done.
+                Open a saved room and set up its action points using the robot view.
+                Your room is already mapped.
               </p>
             </div>
           </div>

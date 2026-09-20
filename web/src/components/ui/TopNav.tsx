@@ -17,7 +17,7 @@ const manage = { to: '/realtor', label: 'Manage spaces', Icon: HouseIcon, end: f
 /** The public two-tab header: Tours (everyone) and Manage spaces (realtors). */
 /** `actions` render to the left of the account pill on signed-in pages. */
 export function TopNav({ actions }: { actions?: ReactNode }) {
-  const { session } = useAuth()
+  const { session, isLoading } = useAuth()
   // A visitor session is just the tour they joined, not an account: only realtors get the pill.
   const realtor = session?.role === 'realtor'
   const tabs = realtor ? [tours, bookings, manage] : [tours, bookings]
@@ -55,7 +55,9 @@ export function TopNav({ actions }: { actions?: ReactNode }) {
       </nav>
 
       <div className="flex items-center gap-3">
-        {realtor ? (
+        {isLoading ? (
+          <span role="status" aria-label="Checking your session" className="h-11 w-20" />
+        ) : realtor ? (
           <>
             {actions}
             <AccountMenu />

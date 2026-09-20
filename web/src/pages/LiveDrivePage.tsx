@@ -7,8 +7,9 @@ import { parseViewerSession } from '../lib/liveTelemetry'
 import { supabase } from '../lib/supabase'
 import { PageShell } from '../components/ui/PageShell'
 import { FreeCamButton } from '../components/control/FreeCamButton'
+import { ActionPointsPanel } from '../components/control/ActionPointsPanel'
 
-export function LiveDrivePage() {
+export function LiveDrivePage({ setup = false }: { setup?: boolean }) {
   const { roomId = '' } = useParams()
   const [view, setView] = useState<LiveView>({
     connection: 'disconnected',
@@ -136,15 +137,16 @@ export function LiveDrivePage() {
     <PageShell wide>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <Link to="/" className="text-sm text-ink-2">
-            Back to tours
+          <Link to={setup ? `/map/${encodeURIComponent(roomId)}` : '/'} className="text-sm text-ink-2">
+            {setup ? 'Back to saved map' : 'Back to tours'}
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold">Explore with the robot</h1>
+          <h1 className="mt-2 text-2xl font-semibold">{setup ? 'Set up action points' : 'Explore with the robot'}</h1>
         </div>
         <span className="text-sm text-ink-2">
           {view.connection === 'connected' && view.robotOnline ? 'Robot connected' : view.connection}
         </span>
       </div>
+      {setup && <ActionPointsPanel key={roomId} roomId={roomId} />}
       <form onSubmit={connect} className="my-5 flex flex-wrap items-end gap-3">
         {manual && (
           <>

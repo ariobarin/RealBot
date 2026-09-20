@@ -16,6 +16,7 @@ import {
 import { useGridStore } from '../store/useGridStore'
 import { useViewStore } from '../store/useViewStore'
 import { useAuth } from '../auth/useAuth'
+import { ActionPointsPanel } from '../components/control/ActionPointsPanel'
 
 const phaseCopy: Record<ConnectionPhase, string> = {
   idle: 'Disconnected',
@@ -27,6 +28,7 @@ const phaseCopy: Record<ConnectionPhase, string> = {
 
 interface ControlPageProps {
   view: 'realtor' | 'user'
+  setup?: boolean
 }
 
 interface ViewTarget {
@@ -39,12 +41,12 @@ type FreeCamLifecycle = { commandId: string; kind: 'start' | 'stop' }
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(Math.max(value, minimum), maximum)
 
-export function ControlPage({ view }: ControlPageProps) {
+export function ControlPage({ view, setup = false }: ControlPageProps) {
   const { roomId = 'demo-bot' } = useParams()
   const navigate = useNavigate()
   const { session, logout } = useAuth()
   const isRealtor = view === 'realtor'
-  const isRealtorPreview = !isRealtor && session?.role === 'realtor'
+  const isRealtorPreview = !isRealtor && !setup && session?.role === 'realtor'
   const client = useMemo(() => new RemoteBotClient(), [])
   const [phase, setPhase] = useState<ConnectionPhase>('connecting')
   const [hasControl, setHasControl] = useState(false)
@@ -217,7 +219,7 @@ export function ControlPage({ view }: ControlPageProps) {
               {hasControl ? 'Control active' : 'View only'}
             </span>
           )}
-          {isRealtor ? (
+          {isRealtor || setup ? (
             <>
               <Link
                 to={`/user/${encodeURIComponent(roomId)}`}
@@ -254,6 +256,8 @@ export function ControlPage({ view }: ControlPageProps) {
         </div>
       </header>
 
+      {setup && <ActionPointsPanel key={roomId} roomId={roomId} />}
+
       {isRealtorPreview && (
         <div className="mt-3 flex shrink-0 items-center justify-between gap-4 rounded-2xl border border-brand/20 bg-brand-soft px-4 py-2 text-sm">
           <span>
@@ -276,7 +280,7 @@ export function ControlPage({ view }: ControlPageProps) {
             {isRealtor ? 'Realtor operations' : 'Remote tour'}
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight">
-            {isRealtor ? roomId : 'Control your bracketbot'}
+            {setup ? 'Set up action points' : isRealtor ? roomId : 'Control your bracketbot'}
           </h1>
           {!isRealtor && <p className="mt-1 text-sm text-ink-2">Connected to {roomId}</p>}
         </div>

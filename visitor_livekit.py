@@ -1,4 +1,4 @@
-"""LiveKit transport for the existing annotated camera, map, and keyboard endpoint."""
+"""LiveKit transport for visitor and action-setup cameras, map, and controls."""
 import argparse
 import asyncio
 import gzip
@@ -15,7 +15,7 @@ from websockets.asyncio.client import connect
 
 from edge_agent.demo_session import DemoConfig, legacy_guard, single_session
 from visitor_freecam import FreeCamRelay
-from visitor_actions import ActionRelay
+from visitor_actions import ActionRelay, ScriptRelay
 
 
 class KeyboardRelay:
@@ -93,7 +93,10 @@ class KeyboardRelay:
 
 async def camera(room, http, media, relay, freecam=None, actions=None, controller=None):
     frames = queue.Queue(maxsize=1)
+    setup_frames = queue.Queue(maxsize=1)
+    setup_publisher = None
     async def read():
+        nonlocal setup_publisher
         size = None
         while True:
             if freecam and freecam.nonce:
@@ -126,6 +129,16 @@ async def camera(room, http, media, relay, freecam=None, actions=None, controlle
             if size is None:
                 size = (left.shape[1], left.shape[0])
             media.push_queue(frames, cv2.cvtColor(cv2.resize(left, size), cv2.COLOR_BGR2RGB))
+            if health.get('tracking_active'):
+                response = await http.get('/frame.jpg?annotated=true')
+                response.raise_for_status()
+                annotated = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
+                left = annotated[:, :annotated.shape[1] // 2]
+                media.push_queue(setup_frames, cv2.cvtColor(cv2.resize(left, size), cv2.COLOR_BGR2RGB))
+                if setup_publisher is None:
+                    setup_publisher = asyncio.create_task(media.publish_feed(room, setup_frames, 'cam-setup'))
+                if setup_publisher.done():
+                    setup_publisher.result()
             await asyncio.sleep(.1)
     tasks = [asyncio.create_task(read()), asyncio.create_task(media.publish_feed(room, frames, 'cam-wrist'))]
     try:
@@ -133,9 +146,51 @@ async def camera(room, http, media, relay, freecam=None, actions=None, controlle
         for task in done:
             task.result()
     finally:
+        if setup_publisher:
+            tasks.append(setup_publisher)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def right_camera_frame(reader):
+    if not reader.ready():
+        return None
+    data = reader.data.copy()
+    if not 0 <= time.time_ns() - int(data['timestamp'].astype('int64')) < 500_000_000:
+        return None
+    length = int(data['jpeg_len'])
+    if not 0 < length <= len(data['jpeg']):
+        return None
+    frame = cv2.imdecode(np.frombuffer(bytes(data['jpeg'][:length]), np.uint8), cv2.IMREAD_COLOR)
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if frame is not None else None
+
+
+async def right_camera(room, media, controller):
+    from bbos import Reader
+
+    frames = queue.Queue(maxsize=1)
+    publisher = None
+    size = None
+    try:
+        with Reader('camera.right.jpeg', keeptime=False) as reader:
+            while True:
+                frame = right_camera_frame(reader)
+                if frame is not None:
+                    if size is None:
+                        size = (frame.shape[1], frame.shape[0])
+                    media.push_queue(frames, cv2.resize(frame, size))
+                    if publisher is None:
+                        publisher = asyncio.create_task(media.publish_feed(room, frames, 'cam-right'))
+                    if publisher.done():
+                        publisher.result()
+                await room.local_participant.publish_data(json.dumps({'fresh': frame is not None}),
+                    reliable=False, topic='realbot.right_camera', destination_identities=[controller])
+                await asyncio.sleep(.1)
+    finally:
+        if publisher:
+            publisher.cancel()
+            await asyncio.gather(publisher, return_exceptions=True)
 
 
 async def maps(room, http, controller):
@@ -152,6 +207,24 @@ async def maps(room, http, controller):
         await asyncio.sleep(1)
 
 
+async def read_action_points(controller, caller):
+    if caller != controller:
+        raise ValueError('Unauthorized controller')
+    async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=2) as http:
+        response = await http.get('/actions')
+        response.raise_for_status()
+        return json.dumps(response.json())
+
+
+async def enable_setup_camera(controller, caller):
+    if caller != controller:
+        raise ValueError('Unauthorized controller')
+    async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=2) as http:
+        response = await http.post('/tracking')
+        response.raise_for_status()
+    return '{}'
+
+
 async def run(config, freecam_path=None, stationary=False):
     from livekit import rtc
     from bbos.daemons.remote_session import session as media
@@ -162,6 +235,8 @@ async def run(config, freecam_path=None, stationary=False):
     freecam = FreeCamRelay.load(config.controller, freecam_path) if freecam_path else None
     actions = ActionRelay(config.controller)
     actions.enabled = actions.enabled and config.mode == 'drive'
+    scripts = ScriptRelay(config.controller)
+    scripts.enabled = scripts.enabled and config.mode == 'drive'
     control_lock = asyncio.Lock()
     room = rtc.Room()
     shutdown = asyncio.Event()
@@ -231,6 +306,19 @@ async def run(config, freecam_path=None, stationary=False):
         except ValueError as error:
             raise rtc.RpcError(2001, str(error)) from None
 
+    async def act_script(data):
+        try:
+            async with control_lock:
+                return json.dumps(await scripts.run(data.caller_identity, data.payload))
+        except ValueError as error:
+            raise rtc.RpcError(2001, str(error)) from None
+
+    async def action_points(data):
+        return await read_action_points(config.controller, data.caller_identity)
+
+    async def setup_camera(data):
+        return await enable_setup_camera(config.controller, data.caller_identity)
+
     async def state():
         while not shutdown.is_set() and time.time() < config.expires:
             await actions.tick()
@@ -252,9 +340,13 @@ async def run(config, freecam_path=None, stationary=False):
             room.local_participant.register_rpc_method('realbot.keyboard.stop', stop)
             room.local_participant.register_rpc_method('realbot.freecam.command', freecam_command)
             room.local_participant.register_rpc_method('realbot.action.command', action_command)
-            print('LiveKit connected; publishing annotated left camera and map', flush=True)
+            room.local_participant.register_rpc_method('realbot.action_points.read', action_points)
+            room.local_participant.register_rpc_method('realbot.camera.setup', setup_camera)
+            room.local_participant.register_rpc_method('realbot.act_script.run', act_script)
+            print('LiveKit connected; publishing visitor camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
                 tasks = [asyncio.create_task(camera(room, http, media, relay, freecam, actions, config.controller)),
+                         asyncio.create_task(right_camera(room, media, config.controller)),
                          asyncio.create_task(maps(room, http, config.controller)),
                          asyncio.create_task(state()), asyncio.create_task(shutdown.wait())]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

@@ -92,9 +92,9 @@ test('realtor dashboard can enter the exact user view', async ({ page }) => {
   await page.getByRole('menuitem', { name: 'Open robot dashboard' }).click()
 
   await expect(page).toHaveURL('/realtor/control/listing-room')
-  await expect(page.getByRole('heading', { name: 'listing-room' })).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByRole('heading', { name: 'Command activity' })).toBeVisible()
-  await expect(page.getByText('SLAM telemetry')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Set up action points' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('summary', { hasText: 'Action points' })).toBeVisible()
+  await expect(page.getByTestId('visitor-minimap')).toBeVisible()
 
   await page.getByRole('link', { name: 'Preview as user' }).click()
   await expect(page).toHaveURL('/user/listing-room')

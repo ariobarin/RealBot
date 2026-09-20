@@ -1,9 +1,9 @@
 import { parseViewerSession } from './liveTelemetry'
 
-let approvedCode = ''
+const approvedCodes = new Map<string, string>()
 
-export function visitorAccessCode() {
-  return approvedCode
+export function visitorAccessCode(roomId?: string) {
+  return approvedCodes.get(roomId || '') || ''
 }
 
 export async function requestVisitorSession(accessCode: string, roomId?: string, signal?: AbortSignal) {
@@ -17,6 +17,6 @@ export async function requestVisitorSession(accessCode: string, roomId?: string,
   if (typeof data.roomId !== 'string' || !data.roomId) throw new Error('Robot session unavailable')
   if (roomId && data.roomId !== roomId) throw new Error('Robot session does not match the requested robot')
   if (!['mobile', 'act'].includes(data.robotRole)) throw new Error('Robot role is unavailable')
-  approvedCode = accessCode
+  approvedCodes.set(data.roomId, accessCode)
   return { ...session, roomId: data.roomId, robotRole: data.robotRole as 'mobile' | 'act' }
 }

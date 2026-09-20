@@ -49,6 +49,8 @@ def test_only_visible_allowlisted_action_and_controller_can_launch(tmp_path):
         relay.tmux = AsyncMock(side_effect=[1, 1, 1, 0])
         await relay.command('visitor', message(), health, keyboard, None)
         assert relay.owned
+        launch = relay.tmux.call_args.args
+        assert launch[launch.index('--duration') + 1] == '0'
         keyboard.stop.assert_awaited_once()
         calls = relay.tmux.call_count
         await relay.command('visitor', message(), health, keyboard, None)
@@ -100,7 +102,12 @@ def test_explicit_run_button_uses_same_policy_without_a_visible_marker(tmp_path)
         data['id'] = 'policy:electric_box'
         health = {'status': 'running', 'source_timestamp_ns': time.time_ns(), 'visible_actions': []}
         await relay.command('visitor', json.dumps(data), health, keyboard, None)
-        assert VisitorControl(relay.path).read() == 'one'
-        relay.stop()
-        assert VisitorControl(relay.path).read() == ''
+        control = VisitorControl(relay.path)
+        assert control.tick() == (True, True)
+        data['action'] = 'stop'
+        await relay.command('visitor', json.dumps(data), {}, keyboard, None)
+        assert control.tick() == (False, False)
+        data.update(action='start', attempt='two')
+        await relay.command('visitor', json.dumps(data), health, keyboard, None)
+        assert control.tick() == (True, True)
     asyncio.run(run())

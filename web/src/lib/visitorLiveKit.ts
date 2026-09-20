@@ -20,6 +20,7 @@ export interface ActionState { available: boolean; owned: boolean; phase: string
 export interface ActionView { points: ActionPoint[]; state: ActionState }
 
 export class VisitorLiveKit extends LiveTelemetryClient {
+  private setupView = false
   private robot = ''
   private clock = 0
   private clockAt = 0
@@ -36,6 +37,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   private actionAttempt = ''
   private actionSequence = 0
   private actionAt = 0
+  private rightCameraAt = 0
   private actionSending = false
 
   constructor(changed: (view: LiveView) => void, mapChanged: (map: MapSnapshot | null) => void,
@@ -48,6 +50,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   }
 
   override async connect(session: ViewerSession) {
+    this.setupView = session.cameraTrack === 'cam-setup'
     this.robot = session.robotIdentity
     await super.connect(session)
   }
@@ -65,6 +68,17 @@ export class VisitorLiveKit extends LiveTelemetryClient {
 
   protected override onConnected() {
     const room = this.room!
+    let setupAt = -Infinity
+    let setupPending = false
+    const keepSetupActive = () => {
+      if (!this.setupView || setupPending || document.hidden || performance.now() - setupAt < 1000) return
+      setupAt = performance.now()
+      setupPending = true
+      void room.localParticipant.performRpc({ destinationIdentity: this.robot,
+        method: 'realbot.camera.setup', payload: '{}', responseTimeout: 2000 })
+        .catch(() => {}).finally(() => { setupPending = false })
+    }
+    keepSetupActive()
     if (this.mapRoom !== room) {
       this.mapRoom = room
       room.registerByteStreamHandler('realbot.slam_map', async (reader, participant) => {
@@ -90,6 +104,9 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     }
     if (this.watch) clearInterval(this.watch)
     this.watch = setInterval(() => {
+      keepSetupActive()
+      if (this.view.rightCameraFresh && performance.now() - this.rightCameraAt > 750)
+        this.update({ rightCameraFresh: false })
       if (performance.now() - this.clockAt > 750) {
         this.drive?.closed('Drive connection interrupted')
         this.freeCamChanged(null)
@@ -104,6 +121,14 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   }
 
   protected override onRobotData(bytes: Uint8Array, topic?: string) {
+    if (topic === 'realbot.right_camera' && bytes.length < 128) {
+      try {
+        const state = JSON.parse(new TextDecoder().decode(bytes))
+        this.rightCameraAt = performance.now()
+        this.update({ rightCameraFresh: state.fresh === true })
+      } catch { /* Ignore invalid camera state. */ }
+      return
+    }
     if (topic === 'realbot.actions' && bytes.length < 32_768) {
       try {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as ActionView
@@ -131,6 +156,13 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     } catch { /* Ignore malformed telemetry. */ }
   }
 
+  async readActionPoints(): Promise<unknown> {
+    if (!this.room || !this.view.robotOnline) throw new Error('Robot disconnected')
+    const reply = await this.room.localParticipant.performRpc({ destinationIdentity: this.robot,
+      method: 'realbot.action_points.read', payload: '{}', responseTimeout: 3000 })
+    return JSON.parse(reply)
+  }
+
   async startAction(id: string) {
     if (!this.room || !this.view.robotOnline || performance.now() - this.actionAt > 750)
       throw new Error('Action locations are not ready')
@@ -143,6 +175,15 @@ export class VisitorLiveKit extends LiveTelemetryClient {
       this.stopAction()
       throw error
     }
+  }
+
+  async runScript(script: 'init' | 'go' | 'stop'): Promise<{ reason?: string }> {
+    if (!this.room || !this.view.robotOnline) throw new Error('Robot disconnected')
+    return JSON.parse(await this.room.localParticipant.performRpc({ destinationIdentity: this.robot,
+      method: 'realbot.act_script.run', responseTimeout: 5000,
+      payload: JSON.stringify({ script,
+        expiresAt: Math.floor(this.clock + performance.now() - this.clockAt + 700) }),
+    }))
   }
 
   private async actionCommand(action: string, id?: string) {

@@ -15,7 +15,7 @@ export function AddMapCard() {
         <AddSpaceIcon size={72} />
         <span className="flex flex-col gap-0.5">
           <span className="text-[15px] font-semibold text-ink">Add a space</span>
-          <span className="text-[13px] text-ink-3">Pair a bracketbot and scan</span>
+          <span className="text-[13px] text-ink-3">Set up a scanned room</span>
         </span>
       </Link>
     </motion.li>

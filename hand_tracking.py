@@ -690,6 +690,8 @@ class StereoHandTracker:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._latest_jpeg = b""
+        self._raw_jpeg = b""
+        self._tracking_until = 0.0
         self._state: dict[str, Any] = {
             "status": "starting",
             "source": CAMERA_TOPIC,
@@ -717,14 +719,18 @@ class StereoHandTracker:
             self._thread.join(timeout=5)
         self.action_landmarks.close()
 
-    def snapshot(self) -> tuple[bytes, dict[str, Any]]:
+    def enable_tracking(self) -> None:
+        self._tracking_until = time.monotonic() + 3.0
+
+    def snapshot(self, annotated: bool = True) -> tuple[bytes, dict[str, Any]]:
         with self._lock:
             # JSON round-trip makes a safe copy of nested landmark lists.
-            return self._latest_jpeg, json.loads(json.dumps(self._state))
+            return (self._latest_jpeg if annotated else self._raw_jpeg), json.loads(json.dumps(self._state))
 
-    def _publish(self, jpeg: bytes, state: dict[str, Any]) -> None:
+    def _publish(self, jpeg: bytes, state: dict[str, Any], raw: bytes) -> None:
         with self._lock:
             self._latest_jpeg = jpeg
+            self._raw_jpeg = raw
             self._state = state
 
     def _set_error(self, message: str) -> None:
@@ -737,6 +743,7 @@ class StereoHandTracker:
         landmarker: Any,
         timestamp_ms: int,
         inference_height: int,
+        tracking: bool = True,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         started = time.perf_counter()
         resized = cv2.resize(
@@ -744,6 +751,8 @@ class StereoHandTracker:
             (self.inference_width, inference_height),
             interpolation=cv2.INTER_AREA,
         )
+        if not tracking:
+            return resized, {"hands": [], "hand_count": 0, "inference_ms": 0.0}
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         media_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,
@@ -815,6 +824,9 @@ class StereoHandTracker:
                     if timestamp_ms <= last_timestamp_ms:
                         timestamp_ms = last_timestamp_ms + 1
                     last_timestamp_ms = timestamp_ms
+                    tracking = time.monotonic() < self._tracking_until
+                    if not tracking:
+                        self.action_landmarks.pause()
 
                     jobs = [
                         executor.submit(
@@ -823,6 +835,7 @@ class StereoHandTracker:
                             landmarker,
                             timestamp_ms,
                             inference_height,
+                            tracking,
                         )
                         for source, landmarker in zip(source_eyes, trackers)
                     ]
@@ -852,14 +865,15 @@ class StereoHandTracker:
                         if health_reader.readable and health_reader.data is not None
                         else None
                     )
-                    self.action_landmarks.observe(
-                        stereo=stereo_result,
-                        rgb_timestamp_ns=source_timestamp_ns,
-                        depth_record=depth_record,
-                        pose_record=pose_record,
-                        health_record=health_record,
-                        pitch_rad=pitch_rad,
-                    )
+                    if tracking:
+                        self.action_landmarks.observe(
+                            stereo=stereo_result,
+                            rgb_timestamp_ns=source_timestamp_ns,
+                            depth_record=depth_record,
+                            pose_record=pose_record,
+                            health_record=health_record,
+                            pitch_rad=pitch_rad,
+                        )
                     action_state = self.action_landmarks.snapshot()
 
                     visible_actions = []
@@ -928,6 +942,7 @@ class StereoHandTracker:
                         "status": "running",
                         "source": CAMERA_TOPIC,
                         "mediapipe_version": mp.__version__,
+                        "tracking_active": tracking,
                         "gesture_model": "MediaPipe canned gestures",
                         "thumbs_up_min_score": THUMBS_UP_MIN_SCORE,
                         "timestamp_ms": timestamp_ms,
@@ -946,7 +961,12 @@ class StereoHandTracker:
                         "action_landmarking": action_state,
                         "visible_actions": visible_actions,
                     }
-                    self._publish(encoded.tobytes(), state)
+                    ok, raw_preview = cv2.imencode(".jpg", cv2.resize(stereo,
+                        (self.inference_width * 2, inference_height)),
+                        [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+                    if ok:
+                        self._publish(encoded.tobytes(), state, raw_preview.tobytes())
+                    self._stop.wait(max(0, .1 - (time.perf_counter() - started)))
         except Exception as exc:  # keep the health endpoint useful on failures
             self._set_error(f"{type(exc).__name__}: {exc}")
             print(f"[tracker] fatal: {type(exc).__name__}: {exc}", flush=True)
@@ -1055,19 +1075,21 @@ def action_landmarks() -> dict[str, Any]:
 
 
 @app.get("/frame.jpg")
-def frame() -> Response:
-    jpeg, _ = _tracker().snapshot()
+def frame(annotated: bool = False) -> Response:
+    jpeg, _ = _tracker().snapshot(annotated)
     if not jpeg:
         return Response(status_code=503)
     return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/stream")
-async def stream() -> StreamingResponse:
+async def stream(annotated: bool = False) -> StreamingResponse:
     async def frames():
         previous = b""
         while True:
-            jpeg, _ = _tracker().snapshot()
+            if annotated:
+                _tracker().enable_tracking()
+            jpeg, _ = _tracker().snapshot(annotated)
             if jpeg and jpeg != previous:
                 previous = jpeg
                 yield (
@@ -1082,6 +1104,12 @@ async def stream() -> StreamingResponse:
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/tracking")
+def tracking() -> dict[str, bool]:
+    _tracker().enable_tracking()
+    return {"active": True}
 
 
 @app.get("/slam-map")
@@ -1127,7 +1155,7 @@ h1{flex-shrink:0;font-size:22px;margin:0 0 12px}
 img{display:block;width:100%;min-height:0;flex:1;object-fit:contain;background:#000;border-radius:10px}
 #status{flex-shrink:0;margin:10px 0;color:#9fe3c2}pre{display:none}
 </style></head><body><main><h1>Stereo hand tracking</h1>
-<img src="/stream" alt="Camera 1 and camera 2 with hand landmarks">
+<img src="/stream?annotated=true" alt="Camera 1 and camera 2 with hand landmarks">
 <div id="status">starting…</div><pre id="data"></pre></main>
 <script>
 async function refresh(){try{const r=await fetch('/landmarks',{cache:'no-store'}),j=await r.json();

@@ -1,6 +1,7 @@
 """Allowlisted electrical-box action, scoped to the current visitor and robot 0188."""
 import asyncio
 import json
+import os
 from pathlib import Path
 import socket
 import time
@@ -29,7 +30,7 @@ class ActionRelay:
                 if script in command and b'--visitor-control' in command:
                     self.owned = True
                     write_json(self.path, {'attempt': '', 'until': 0})
-                    self.state = {'phase': 'held', 'reason': 'Policy ready; click the electrical-box circle'}
+                    self.state = {'phase': 'held', 'reason': 'Policy ready; press Run ACT'}
             except (OSError, ValueError, KeyError, TypeError):
                 pass
 
@@ -86,7 +87,7 @@ class ActionRelay:
             self.path.with_suffix('.state.json').unlink(missing_ok=True)
             result = await self.tmux('new-session', '-d', '-s', 'visitor-act', '-c', str(self.root),
                                     str(self.root / '.venv/bin/python'), '-u', str(Path(__file__).parent / 'act_local/live2.py'),
-                                    '--hold-start', '--yes', '--visitor-control', str(self.path))
+                                    '--hold-start', '--yes', '--duration', '0', '--visitor-control', str(self.path))
             if result:
                 self.stop()
                 raise ValueError('Could not start the policy')
@@ -134,3 +135,94 @@ class ActionRelay:
                 pass
         return dict(self.state, available=self.enabled, owned=self.owned,
                     attempt=self.attempt or self.state.get('attempt', ''))
+
+
+SCRIPTS = {'init': ('demo.sh', 'guided'), 'go': ('go.sh',), 'stop': ('stop.sh',)}
+
+
+class ScriptRelay:
+    """The three operator demo scripts in ~/act-local, exposed to the 0188 panel.
+
+    Only the fixed command lines in SCRIPTS can run and nothing from the payload ever
+    reaches them, so the panel cannot ask for anything else. They run detached because
+    `demo.sh guided` waits for quest_teleop to finish its staged homing, far longer than
+    an RPC round trip. Initialize and Go also need somebody at the robot: Initialize
+    starts Quest teleop so an operator can place the finger in the latch, and Go hands
+    the arms to the policy from wherever they were left.
+    """
+
+    def __init__(self, controller, root=Path('/home/bracketbot/act-local')):
+        self.controller, self.root = controller, root
+        self.enabled = (socket.gethostname() == 'bracketbot-0188'
+                        and (root / 'run-v3/best/model.safetensors').is_file())
+        self.running = ''
+        self.result = {}
+        self.task = None
+
+    # The bridge runs inside a nix/devenv environment whose LD_LIBRARY_PATH points at a
+    # gcc-13 libstdc++ linked against GLIBC_2.38, which this Ubuntu does not provide. A
+    # script that inherits it cannot import torch, so the policy dies on startup while the
+    # same script works over SSH. Hand the scripts the plain login environment instead.
+    PATH = '/home/bracketbot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+    def environment(self):
+        keep = ('HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TZ')
+        env = {name: os.environ[name] for name in keep if name in os.environ}
+        env.setdefault('HOME', str(Path.home()))
+        env.setdefault('USER', 'bracketbot')
+        env['PATH'] = self.PATH
+        env['SHELL'] = '/bin/bash'
+        return env
+
+    def validate(self, caller, payload):
+        if caller != self.controller or len(payload) > 1024:
+            raise ValueError('Unauthorized script command')
+        message = json.loads(payload)
+        expiry = message.get('expiresAt')
+        if type(expiry) is not int or not 0 < expiry - time.time() * 1000 <= 750:
+            raise ValueError('Script command expired')
+        return message
+
+    async def run(self, caller, payload):
+        message = self.validate(caller, payload)
+        name = message.get('script')
+        if name not in SCRIPTS:
+            raise ValueError('Unknown script')
+        if not self.enabled:
+            raise ValueError('The demo scripts run only on 0188')
+        # Stop is always allowed; it is the way out of a run that is misbehaving.
+        if self.running and name != 'stop':
+            raise ValueError(f'{self.running} is still running; wait for it to finish')
+        self.running = name
+        self.result = {'script': name, 'phase': 'running', 'at': int(time.time() * 1000),
+                       'reason': f'{name} started'}
+        self.task = asyncio.create_task(self.execute(name))
+        return self.status()
+
+    async def execute(self, name):
+        log = self.root / f'panel-{name}.log'
+        code, detail = None, ''
+        try:
+            with log.open('wb') as handle:
+                process = await asyncio.create_subprocess_exec(
+                    str(self.root / SCRIPTS[name][0]), *SCRIPTS[name][1:], cwd=str(self.root),
+                    env=self.environment(), stdin=asyncio.subprocess.DEVNULL, stdout=handle,
+                    stderr=asyncio.subprocess.STDOUT)
+                code = await asyncio.wait_for(process.wait(), 180)
+        except asyncio.TimeoutError:
+            detail = f'{name} timed out after 180 s'
+        except OSError as error:
+            detail = f'{name} could not start ({type(error).__name__})'
+        if not detail:
+            try:
+                lines = [line for line in log.read_text().splitlines() if line.strip()]
+                detail = lines[-1][:160] if lines else f'{name} finished'
+            except OSError:
+                detail = f'{name} finished'
+        self.result = {'script': name, 'phase': 'done' if code == 0 else 'failed',
+                       'at': int(time.time() * 1000), 'exit': code, 'reason': detail}
+        if self.running == name:
+            self.running = ''
+
+    def status(self):
+        return dict(self.result, available=self.enabled, running=self.running)
