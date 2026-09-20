@@ -1,0 +1,102 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Right wrist Free Cam</title>
+<style>
+body{max-width:720px;margin:24px auto;padding:0 16px;background:#182027;color:#eee;font:16px system-ui}
+img{width:100%;min-height:240px;background:#080b0d}button{padding:12px;margin:5px;border:0;border-radius:8px;font:inherit;touch-action:none;user-select:none}
+button:disabled{opacity:.4}#stop{background:#df4545;color:white}#status{min-height:48px}small{color:#bbc6ce}
+</style>
+<h1>Right wrist Free Cam</h1>
+<p id="robot">Robot identity pending</p>
+<img id="camera" alt="Right wrist camera">
+<p id="status">Connecting...</p>
+<button id="start" disabled>Start / resume</button><button id="stop">Stop and hold</button>
+<div><button data-direction="-1,0" disabled>Left</button><button data-direction="1,0" disabled>Right</button>
+<button data-direction="0,1" disabled>Up</button><button data-direction="0,-1" disabled>Down</button>
+<button id="center" disabled>Look forward</button><button id="open" disabled>Open claw</button></div>
+<p>Hold an arrow key, WASD, or a direction button to move. Release to stop. Escape stops and holds.</p>
+<p><small>Start raises the right arm into its viewing pose. The arm then moves together to keep the image level. Requested range: 110° each side, 85° up, straight down. The reachable edge depends on direction; change direction when “Reach limit” appears. The gripper stays held and the base keeps its balance mode.</small></p>
+<p><label><input type="checkbox" id="supported"> I am supporting the arm so it cannot fall.</label></p>
+<button id="release" disabled>Release torque</button>
+<script>
+const token=location.hash.slice(1)||sessionStorage.getItem('freeCamKey')||'';
+if(token)sessionStorage.setItem('freeCamKey',token);history.replaceState(null,'',location.pathname);
+const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'};
+const $=id=>document.getElementById(id),keys=new Set();
+const directions={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1],a:[-1,0],d:[1,0],w:[0,1],s:[0,-1]};
+let session='',sequence=0,state=null,pending=false,robotAt=0,receivedAt=0,lastURL='',error='',pointer=null;
+async function api(path,body){
+ const r=await fetch(path,{headers,signal:AbortSignal.timeout(800),...(body?{method:'POST',body:JSON.stringify(body)}:{})});
+ if(!r.ok){const data=await r.json().catch(()=>({}));throw Error(data.error||'Connection unavailable; refresh this page')}
+ return r.json();
+}
+function message(action,extra={}){return {action,session,expires:robotAt+(performance.now()-receivedAt)/1000+1,...extra}}
+function clearInput(){keys.clear();pointer=null}
+function render(){
+ $('robot').textContent=state?.robot||'Robot disconnected';
+ const active=!!session&&state?.phase==='active'&&state.ready&&!pending;
+ $('start').disabled=!state?.control||pending||['active','starting'].includes(state?.phase);
+ document.querySelectorAll('[data-direction]').forEach(b=>b.disabled=!active);
+ $('center').disabled=!active||state.moving;
+ $('open').disabled=!active||state.moving;
+ $('release').disabled=!$('supported').checked||!state||state.phase==='idle';
+ $('status').textContent=error||(state?`${state.phase}: ${state.reason||state.notice||''} | pan ${state.offsets[0].toFixed(1)}°, tilt ${state.offsets[1].toFixed(1)}°`:'Disconnected');
+}
+async function command(action,extra={}){
+ if(pending&&action!=='stop')return;
+ clearInput();pending=true;error='';render();
+ try{state=await api('/command',message(action,extra));
+ if(action==='start'){session=state.session;sequence=0}if(['stop','release'].includes(action))session='';
+ }catch(e){error=e.message}finally{pending=false;render()}
+}
+function direction(){
+ const d=pointer?pointer.slice():[0,0];for(const k of keys)directions[k].forEach((v,i)=>d[i]+=v);
+ return d.map(v=>Math.sign(v));
+}
+async function jog(){
+ if(!session||state?.phase!=='active'||!state.ready||pending)return;
+ const [pan,tilt]=direction();
+ try{await api('/command',message('jog',{pan,tilt,sequence:++sequence}))}
+ catch(e){clearInput();error=e.message;render()}
+}
+$('start').onclick=()=>command('start');$('stop').onclick=()=>command('stop');
+$('release').onclick=()=>command('release',{supported:$('supported').checked});$('supported').onchange=render;
+$('center').onclick=()=>command('pose',{pan:0,tilt:0,sequence:++sequence});
+$('open').onclick=()=>command('open_gripper');
+document.querySelectorAll('[data-direction]').forEach(b=>{
+ b.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();b.setPointerCapture(e.pointerId);pointer=b.dataset.direction.split(',').map(Number);jog()};
+ b.onpointerup=b.onpointercancel=b.onlostpointercapture=()=>{pointer=null;jog()};
+});
+window.addEventListener('keydown',e=>{
+ if(e.key==='Escape'){e.preventDefault();command('stop');return}
+ const key=e.key.length===1?e.key.toLowerCase():e.key;
+ if(!directions[key]||e.altKey||e.ctrlKey||e.metaKey||e.target.isContentEditable||e.target.matches('input,textarea,select'))return;
+ e.preventDefault();if(!keys.has(key)){keys.add(key);jog()}
+});
+window.addEventListener('keyup',e=>{
+ const key=e.key.length===1?e.key.toLowerCase():e.key;
+ if(keys.delete(key)){e.preventDefault();jog()}
+});
+setInterval(()=>{if(keys.size||pointer)jog()},100);
+async function poll(){
+ try{
+ if(session)await api('/command',message('heartbeat'));
+ state=await api('/state');robotAt=state.now;receivedAt=performance.now();
+ if(!['active','starting'].includes(state.phase)){session='';clearInput()}
+ render();
+ }catch(e){clearInput();session='';state=null;error=e.message;render()}
+ finally{setTimeout(poll,200)}
+}
+async function camera(){
+ try{
+ const r=await fetch('/camera',{headers,signal:AbortSignal.timeout(1500)});if(!r.ok)throw Error('Camera unavailable');
+ const url=URL.createObjectURL(await r.blob());$('camera').src=url;if(lastURL)URL.revokeObjectURL(lastURL);lastURL=url;
+ }catch(e){if(session)command('stop');error=e.message;render()}
+ finally{setTimeout(camera,150)}
+}
+function leave(){if(session)command('stop');else clearInput()}
+window.addEventListener('blur',leave);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)leave()});
+window.addEventListener('pagehide',()=>{if(session)fetch('/command',{method:'POST',headers,body:JSON.stringify({action:'stop'}),keepalive:true}).catch(()=>{})});
+poll();camera();
+</script>

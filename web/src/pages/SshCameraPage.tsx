@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { PageShell } from '../components/ui/PageShell'
+import { FreeCamButton } from '../components/control/FreeCamButton'
 import { startKeyboardDrive } from '../lib/keyboardDrive'
 import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
 import { VisitorLiveKit } from '../lib/visitorLiveKit'
@@ -116,6 +117,10 @@ export function SshCameraPage() {
       )}
       <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>
+        <FreeCamButton onOpen={() => {
+          setDriving(false)
+          setDriveStatus('Drive stopped for Free Cam')
+        }} />
         <button
           disabled={!driving && (failed || (livekit && !view.camera))}
           className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"

@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 
 [project.optional-dependencies]
 driving = ["numpy>=1.26", "Pillow>=10", "PyYAML>=6"]
+free-cam = ["numpy>=1.26", "aiohttp>=3.9"]
 tokens = ["livekit-api>=1,<2", "python-dotenv>=1,<2"]
 
 [build-system]
@@ -14,6 +15,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+edge_agent = ["wrist_demo.html"]
 
 [dependency-groups]
 dev = ["pytest>=8,<9"]

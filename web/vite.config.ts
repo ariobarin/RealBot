@@ -2,9 +2,10 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { readFile } from 'node:fs/promises'
+import { freeCamSession } from './freeCamSession.js'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), {
+  plugins: [react(), tailwindcss(), freeCamSession(), {
     name: 'private-livekit-demo-session',
     configureServer(server) {
       server.middlewares.use('/api/livekit-session', async (request, response) => {

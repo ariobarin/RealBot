@@ -19,6 +19,9 @@ development flow; robot deployment and physical acceptance remain pending.
 
 ## Implementation boundary
 
+The [Free Cam notes](../docs/FREE_CAM.md) describe the standalone camera-pose
+IK mode, its workspace and hardware validation.
+
 | Capability | Owner | This package does |
 | --- | --- | --- |
 | SLAM, maps, pose health | bbOS `slam` and `mapping` daemons | Read and normalize |

@@ -6,6 +6,7 @@ import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
 import { supabase } from '../lib/supabase'
 import { PageShell } from '../components/ui/PageShell'
+import { FreeCamButton } from '../components/control/FreeCamButton'
 
 export function LiveDrivePage() {
   const { roomId = '' } = useParams()
@@ -266,6 +267,10 @@ export function LiveDrivePage() {
         )}
       </div>
       <div className="my-5 flex flex-wrap items-center gap-3">
+        <FreeCamButton onOpen={() => {
+          client.current?.disconnect()
+          setMarker(undefined)
+        }} />
         <button
           className="flex items-center gap-2 rounded-lg bg-red-700 px-5 py-3 font-semibold text-white disabled:opacity-40"
           disabled={!drive.available}
