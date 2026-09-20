@@ -10,6 +10,9 @@ if ! tmux has-session -t act-v3 2>/dev/null; then
     exec ~/act-local/demo.sh
 fi
 if pgrep -f 'quest_teleop/main.py' >/dev/null; then
+    if ! grep -q "TELEOP ENABLED\|\[teleop\] plane=" ~/quest_teleop.log 2>/dev/null; then
+        echo "teleop is still homing -- wait for demo.sh to print READY before handing off"; exit 1
+    fi
     pkill -KILL -f 'quest_teleop/main.py'
     sleep 0.5
     tmux kill-session -t quest-teleop 2>/dev/null

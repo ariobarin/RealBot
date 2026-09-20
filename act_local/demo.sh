@@ -27,7 +27,21 @@ echo "=== demo.sh $mode $(date +%T) ===" >> live2.log
 if [ "$mode" = guided ]; then
     tmux new -d -s act-v3 ".venv/bin/python -u live2.py --hold-start 2>&1 | tee -a live2.log"
     tmux new -d -s quest-teleop "cd ~/realbot && /home/bracketbot/.local/bin/uv run quest_teleop/main.py 2>&1 | tee ~/quest_teleop.log"
-    echo "teleop starting, policy loading (~25 s). Guide the finger into the hole, then run:  ~/act-local/go.sh"
+    echo "teleop + policy starting; waiting for teleop to finish homing (do NOT run go.sh yet) ..."
+    ok=0
+    for i in $(seq 1 120); do
+        if grep -q "TELEOP ENABLED\|\[teleop\] plane=" ~/quest_teleop.log 2>/dev/null \
+           && tail -40 live2.log | grep -q "MODEL READY"; then ok=1; break; fi
+        if ! tmux has-session -t quest-teleop 2>/dev/null; then
+            echo "teleop exited during startup; check ~/quest_teleop.log then run demo.sh guided again"; exit 1
+        fi
+        sleep 1
+    done
+    if [ "$ok" = 1 ]; then
+        echo "READY: teleop homed, policy loaded. Guide the finger into the hole, then run:  ~/act-local/go.sh"
+    else
+        echo "teleop/policy did not report ready in 120 s; check ~/quest_teleop.log and tmux a -t act-v3"; exit 1
+    fi
 else
     tmux new -d -s act-v3 ".venv/bin/python -u live2.py --yes 2>&1 | tee -a live2.log"
     echo "policy starting: loads (~25 s), homes, ramps to the demo start pose, runs 120 s.  Watch:  tmux a -t act-v3"

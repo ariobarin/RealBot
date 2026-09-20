@@ -159,6 +159,10 @@ for side in ('left', 'right'):
             if not reader.readable:
                 break
             if time.monotonic() >= deadline:
+                if args.hold_start:
+                    print(f'[hold-start] arm_{side}.ctrl writer slot still registered '
+                          f'(killed teleop); taking the arms over anyway', flush=True)
+                    break
                 raise RuntimeError(f'Another controller owns arm_{side}; stop it first')
             time.sleep(.1)
     finally:
