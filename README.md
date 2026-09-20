@@ -14,6 +14,7 @@ this repository does not include the robot OS or its environment.
 - `relay/`: local protocol simulator and fake robot adapters; not the selected hardware transport
 - `stereo_capture_web.py`: stereo calibration capture
 - `greeter/`, `mimic/`, `play_sound/`, `low_battery/`: robot apps
+- `act_local/`: on-robot ACT policy for opening the electrical box; [`act_local/DEMO.md`](act_local/DEMO.md) has the init / go / stop commands
 
 Run an app from this directory with `uv run <script.py>` after checking its
 hardware requirements. Teleoperation and movement apps command real hardware.
