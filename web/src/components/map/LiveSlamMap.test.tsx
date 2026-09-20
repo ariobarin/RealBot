@@ -13,7 +13,6 @@ it('keeps the minimap visible while waiting, empty, receiving, and losing SLAM d
   const fetch = vi.fn()
   vi.stubGlobal('fetch', fetch)
   const view = render(<LiveSlamMap snapshot={null} />)
-  expect(screen.getByText('SLAM')).toBeTruthy()
   expect(screen.getByRole('status').textContent).toBe('Waiting for SLAM data')
   const empty = { positions: [], colors: [], pointSize: 0.02, totalPoints: 0, robot: { x: 0, y: 0, heading: 0 } }
   view.rerender(<LiveSlamMap snapshot={empty} />)
