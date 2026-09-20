@@ -50,9 +50,12 @@ export function LiveSlamMap({ snapshot }: { snapshot?: MapSnapshot | null }) {
     return () => { abort.abort(); clearTimeout(timer) }
   }, [external])
 
+  const status = error || (!cloud ? 'Waiting for SLAM data' : !cloud.positions.length ? 'No map points yet' : '')
   return (
-    <section aria-label="Live SLAM map" className="relative h-full w-full overflow-hidden">
-      {cloud && !error && (
+    <section aria-label="Live SLAM map" className="relative h-full w-full overflow-hidden rounded-xl border border-white/30 bg-slate-950/90 text-white shadow-lg">
+      <span className="pointer-events-none absolute left-2 top-2 z-10 text-xs font-semibold">SLAM</span>
+      {status && <p role="status" className="flex h-full items-center justify-center p-4 text-center text-xs">{status}</p>}
+      {cloud && !status && (
         <Canvas camera={{ position: [5, 5, 5], fov: 50 }} dpr={[1, 1.5]} gl={{ alpha: true }}>
           <ambientLight intensity={2} />
           <Bounds fit clip margin={1.3}>
