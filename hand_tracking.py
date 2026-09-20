@@ -862,6 +862,7 @@ class StereoHandTracker:
                     )
                     action_state = self.action_landmarks.snapshot()
 
+                    visible_actions = []
                     pose_ts = record_timestamp(pose_record)
                     if (pose_ts is not None and source_timestamp_ns is not None
                             and abs(pose_ts-source_timestamp_ns) <= 100_000_000
@@ -884,6 +885,9 @@ class StereoHandTracker:
                                 h, w = output.shape[:2]
                                 if not (0 <= x < w and 0 <= y < h):
                                     continue
+                                if eye == 0:
+                                    visible_actions.append({"id": item["id"], "action_id": item["action_id"],
+                                                            "label": label, "x": x / w, "y": y / h})
                                 cv2.circle(output, (x, y), 8, (0, 0, 0), -1, cv2.LINE_AA)
                                 cv2.circle(output, (x, y), 5, bgr, -1, cv2.LINE_AA)
                                 text_width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .5, 1)[0][0]
@@ -940,6 +944,7 @@ class StereoHandTracker:
                         "camera_2": camera_payloads[1],
                         "stereo": stereo_result,
                         "action_landmarking": action_state,
+                        "visible_actions": visible_actions,
                     }
                     self._publish(encoded.tobytes(), state)
         except Exception as exc:  # keep the health endpoint useful on failures

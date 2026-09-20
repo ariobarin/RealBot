@@ -15,6 +15,7 @@ from websockets.asyncio.client import connect
 
 from edge_agent.demo_session import DemoConfig, legacy_guard, single_session
 from visitor_freecam import FreeCamRelay
+from visitor_actions import ActionRelay
 
 
 class KeyboardRelay:
@@ -90,7 +91,7 @@ class KeyboardRelay:
                 self.task = None
 
 
-async def camera(room, http, media, relay, freecam=None):
+async def camera(room, http, media, relay, freecam=None, actions=None, controller=None):
     frames = queue.Queue(maxsize=1)
     async def read():
         size = None
@@ -108,10 +109,16 @@ async def camera(room, http, media, relay, freecam=None):
             if (health.get('status') != 'running'
                     or not 0 <= time.time_ns() - health.get('source_timestamp_ns', 0) < 1_000_000_000):
                 await relay.stop()
+                if actions:
+                    actions.stop()
                 if time.time_ns() - health.get('source_timestamp_ns', 0) > 5_000_000_000:
                     raise RuntimeError('Camera stale')
                 await asyncio.sleep(.1)
                 continue
+            if actions:
+                await room.local_participant.publish_data(json.dumps({
+                    'points': health.get('visible_actions', []), 'state': actions.snapshot(),
+                }), reliable=False, topic='realbot.actions', destination_identities=[controller])
             response = await http.get('/frame.jpg')
             response.raise_for_status()
             frame = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
@@ -153,6 +160,8 @@ async def run(config, freecam_path=None):
     legacy_guard(daemon)
     relay = KeyboardRelay(config.controller)
     freecam = FreeCamRelay.load(config.controller, freecam_path) if freecam_path else None
+    actions = ActionRelay(config.controller)
+    actions.enabled = actions.enabled and config.mode == 'drive'
     control_lock = asyncio.Lock()
     room = rtc.Room()
     shutdown = asyncio.Event()
@@ -161,6 +170,7 @@ async def run(config, freecam_path=None):
     room.on('disconnected', lambda *_: shutdown.set())
     room.on('reconnecting', lambda *_: shutdown.set())
     async def stop_controls():
+        actions.stop()
         await relay.stop()
         if freecam:
             try:
@@ -178,6 +188,8 @@ async def run(config, freecam_path=None):
             relay.receive(packet.participant.identity, packet.data)
         elif packet.topic == 'realbot.freecam' and freecam:
             freecam.receive(packet.participant.identity, packet.data)
+        elif packet.topic == 'realbot.action_pulse':
+            actions.receive(packet.participant.identity, packet.data)
     room.on('data_received', received)
 
     async def start(data):
@@ -185,6 +197,8 @@ async def run(config, freecam_path=None):
             raise ValueError('Driving is disabled for this session')
         try:
             async with control_lock:
+                if actions.owned:
+                    raise ValueError('Finish the arm policy session before driving')
                 if freecam and (freecam.nonce or freecam.state.get('phase') != 'idle'):
                     raise ValueError('Release Free Cam control before driving')
                 return await relay.start(data.caller_identity, data.payload)
@@ -202,10 +216,24 @@ async def run(config, freecam_path=None):
         if not freecam or config.mode != 'drive':
             raise ValueError('Free Cam unavailable for this session')
         async with control_lock:
+            if actions.owned:
+                raise ValueError('Finish the arm policy session before Free Cam')
             return await freecam.command(data.caller_identity, data.payload, relay)
+
+    async def action_command(data):
+        try:
+            async with control_lock:
+                message = actions.validate(data.caller_identity, data.payload)
+                async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=.5) as http:
+                    health = (await http.get('/health')).json() if message.get('action') == 'start' else {}
+                await actions.command(data.caller_identity, data.payload, health, relay, freecam)
+                return json.dumps(actions.snapshot())
+        except ValueError as error:
+            raise rtc.RpcError(2001, str(error)) from None
 
     async def state():
         while not shutdown.is_set() and time.time() < config.expires:
+            await actions.tick()
             legacy_guard(daemon)
             await room.local_participant.publish_data(
                 json.dumps({'at': int(time.time() * 1000), 'nonce': relay.nonce}),
@@ -223,9 +251,10 @@ async def run(config, freecam_path=None):
             room.local_participant.register_rpc_method('realbot.keyboard.start', start)
             room.local_participant.register_rpc_method('realbot.keyboard.stop', stop)
             room.local_participant.register_rpc_method('realbot.freecam.command', freecam_command)
+            room.local_participant.register_rpc_method('realbot.action.command', action_command)
             print('LiveKit connected; publishing annotated left camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
-                tasks = [asyncio.create_task(camera(room, http, media, relay, freecam)),
+                tasks = [asyncio.create_task(camera(room, http, media, relay, freecam, actions, config.controller)),
                          asyncio.create_task(maps(room, http, config.controller)),
                          asyncio.create_task(state()), asyncio.create_task(shutdown.wait())]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

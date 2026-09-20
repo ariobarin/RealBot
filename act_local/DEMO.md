@@ -56,3 +56,21 @@ command. The door-open motion is left J5 (the sixth value) climbing from near 0 
   updated scripts there; the weights (`run-v3/best/model.safetensors`) live only on the robot.
 
 See `README.md` in this directory for the training pipeline and why the first attempt failed.
+
+## Visitor action circles
+
+The LiveKit visitor page can start this policy by clicking a saved **Electric box** circle.
+It is enabled only on 0188 when the checkpoint is installed. Position the robot and arms
+at the box first: this starts from the current pose, without navigation, homing, or a reset ramp.
+Other action types stay disabled until they have a policy.
+
+Deploy the updated `hand_tracking.py`, `visitor_livekit.py`, `visitor_actions.py`,
+`act_local/live2.py`, and `act_local/visitor_control.py` with the visitor bridge.
+It reuses `~/act-local` weights and Python environment. Existing ACT or Quest sessions must finish first; the click never
+kills them. The managed session is `visitor-act`.
+
+**Stop action**, Escape, leaving the page, or a lost connection pauses and holds the arms.
+A later click starts a new attempt. An attempt also pauses after 120 seconds; the policy
+does not detect that the door is open, so press Stop once it opens. WASD and Free Cam stay
+locked while the policy owns the arms. At the end, an operator can park and exit with
+`tmux send-keys -t visitor-act q`; only do this when the parking path is clear.

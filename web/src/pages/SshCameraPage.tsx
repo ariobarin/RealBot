@@ -3,9 +3,10 @@ import { Link, useParams } from 'react-router-dom'
 import { PageShell } from '../components/ui/PageShell'
 import { FreeCamButton } from '../components/control/FreeCamButton'
 import { RemoteFreeCam } from '../components/control/RemoteFreeCam'
+import { ActionLocations } from '../components/control/ActionLocations'
 import { startKeyboardDrive } from '../lib/keyboardDrive'
 import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
-import { VisitorLiveKit, type FreeCamState } from '../lib/visitorLiveKit'
+import { VisitorLiveKit, type ActionView, type FreeCamState } from '../lib/visitorLiveKit'
 import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
 import { requestVisitorSession, visitorAccessCode } from '../lib/visitorSession'
@@ -23,9 +24,10 @@ export function SshCameraPage() {
   const [view, setView] = useState<LiveView>({ connection: 'disconnected', robotOnline: false, telemetryFresh: false })
   const [map, setMap] = useState<MapSnapshot | null>(null)
   const [freeCam, setFreeCam] = useState<FreeCamState | null>(null)
+  const [actions, setActions] = useState<ActionView | null>(null)
   const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
-  const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam))
+  const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
   const changeView = useCallback((_viewing: boolean) => {
     setDriving(false)
     setDriveStatus('Drive stopped')
@@ -70,7 +72,9 @@ export function SshCameraPage() {
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
-          <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.' : 'Saved action locations appear in the camera view.'}</p>
+          <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.'
+            : actions?.state.available ? 'Position at the box, then click its circle to open it. Stop when it opens.'
+              : 'Saved action locations appear in the camera view.'}</p>
         </div>
         <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>
       </header>
@@ -109,6 +113,9 @@ export function SshCameraPage() {
               onError={() => { setFailed(true); setDriving(false) }}
               className="w-[200%] max-w-none"
             />}
+            {livekit && <ActionLocations client={client} view={actions}
+              disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera}
+              onStart={() => { setDriving(false); setDriveStatus('Drive stopped for arm action') }} />}
             {livekit && !view.camera && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-white">
               <p>{view.error || 'Connecting camera…'}</p>
               {view.error && <button className="rounded-lg border px-4 py-2" onClick={() => {
@@ -123,12 +130,12 @@ export function SshCameraPage() {
       )}
       <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>
-        {livekit ? <RemoteFreeCam client={client} state={freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
+        {livekit ? <RemoteFreeCam client={client} state={actions?.state.owned ? null : freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
           setDriving(false)
           setDriveStatus('Drive stopped for Free Cam')
         }} />}
         <button
-          disabled={!driving && (failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
+          disabled={!driving && (actions?.state.owned || failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
           className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
           onClick={() => {
             setDriveStatus(driving ? 'Drive stopped' : 'Connecting drive…')
