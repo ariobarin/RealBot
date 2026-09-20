@@ -152,10 +152,11 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
             {livekit && <ActionLocations client={client} view={actions}
               disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera} />}
             {livekit && !view.camera && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-white">
-              <p>{view.error || 'Connecting camera…'}</p>
-              {view.error && <button className="rounded-lg border px-4 py-2" onClick={() => {
+              <p>{view.error || (view.connection === 'connected' && !view.robotOnline
+                ? 'Robot offline. Turn it on, then reconnect.' : 'Connecting camera…')}</p>
+              <button className="rounded-lg border px-4 py-2" onClick={() => {
                 setDriving(false); setAttempt((value) => value + 1)
-              }}>Reconnect</button>}
+              }}>Reconnect</button>
             </div>}
             {!viewingHand && robotRole !== 'act' && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[34%] min-w-32 max-w-72">
               <LiveSlamMap snapshot={livekit ? map : undefined} />

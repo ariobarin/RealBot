@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 
 const mocks = vi.hoisted(() => ({
-  session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(),
+  changed: (_view: unknown) => {}, session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(),
 }))
 vi.mock('../lib/visitorSession', () => ({ requestVisitorSession: mocks.session, visitorAccessCode: () => '' }))
 vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
@@ -13,6 +13,7 @@ vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
   actions: (view: unknown) => void
   constructor(changed: (view: unknown) => void, _map: unknown, _freecam: unknown, actions: (view: unknown) => void) {
     this.changed = changed
+    mocks.changed = changed
     this.actions = actions
   }
   async connect() {
@@ -77,4 +78,19 @@ it('setup selects a robot by code and reads its recorder without treating the sa
   expect(screen.getByText('Action points stopped. Robot connection released.')).toBeTruthy()
   expect(screen.getByLabelText('Robot access code')).toBeTruthy()
   expect(mocks.session).toHaveBeenCalledTimes(1)
+})
+
+it('can reconnect when the robot disappears without a connection error', async () => {
+  mocks.session.mockResolvedValue({ roomId: '0188', robotRole: 'act' })
+  render(<MemoryRouter><RobotCameraPanel setup={false} /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Robot access code'), { target: { value: '0188' } })
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }))
+  await screen.findByRole('button', { name: 'Run ACT' })
+  act(() => mocks.changed({ connection: 'connected', robotOnline: false }))
+  const reconnect = screen.getByRole('button', { name: 'Reconnect' })
+  expect(screen.getByText('Robot offline. Turn it on, then reconnect.')).toBeTruthy()
+  fireEvent.click(reconnect)
+  await waitFor(() => expect(mocks.session).toHaveBeenCalledTimes(2))
+  expect(mocks.disconnect).toHaveBeenCalledOnce()
+  expect(mocks.startAction).not.toHaveBeenCalled()
 })
