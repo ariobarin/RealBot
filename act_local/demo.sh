@@ -7,8 +7,12 @@ set -u
 cd ~/act-local
 mode=${1:-fresh}
 if tmux has-session -t act-v3 2>/dev/null; then
-    tmux send-keys -t act-v3 q
-    for i in $(seq 1 60); do tmux has-session -t act-v3 2>/dev/null || break; sleep 1; done
+    if tail -1 live2.log | grep -q "MODEL READY"; then
+        tmux kill-session -t act-v3          # never took the arms: nothing to park
+    else
+        tmux send-keys -t act-v3 q
+        for i in $(seq 1 60); do tmux has-session -t act-v3 2>/dev/null || break; sleep 1; done
+    fi
 fi
 if tmux has-session -t quest-teleop 2>/dev/null; then
     tmux send-keys -t quest-teleop C-c

@@ -16,6 +16,9 @@ if pgrep -f 'quest_teleop/main.py' >/dev/null; then
     last=$(tail -1 live2.log)
     if grep -q "MODEL READY" <<<"$last"; then tmux send-keys -t act-v3 Enter; else tmux send-keys -t act-v3 Space; sleep 0.5; tmux send-keys -t act-v3 r; fi
     echo "handoff: policy running from the pose teleop left the arms in."
+elif grep -q "MODEL READY" <<<"$(tail -1 live2.log)"; then
+    tmux send-keys -t act-v3 Enter
+    echo "policy was waiting at its prompt: started (homes + ramps unless it was launched with --hold-start)."
 else
     key=n; [ "${1:-}" = here ] && key=r
     tmux send-keys -t act-v3 Space; sleep 0.5; tmux send-keys -t act-v3 "$key"
