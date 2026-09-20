@@ -22,17 +22,7 @@ import uvicorn
 
 from bbos import Reader, Writer, Type, Config
 
-WHEEL_VEL_COMBOS = {
-    'w':    (0.20, 0.20),
-    's':    (-0.20, -0.20),
-    'a':    (-0.15, 0.15),
-    'd':    (0.15, -0.15),
-    'wa':   (0.05, 0.28),
-    'wd':   (0.28, 0.05),
-    'sa':   (-0.05, -0.28),
-    'sd':   (-0.28, -0.05),
-    '':     (0.0, 0.0),
-}
+from drive_commands import WHEEL_VEL_COMBOS, wheel_vels_to_twist as _wheel_vels_to_twist
 
 CFG_C = Config("cam_head")
 
@@ -61,10 +51,7 @@ _latest_telemetry = None
 
 
 def wheel_vels_to_twist(v_left, v_right):
-    R = CFG_drive.robot_width * 0.5
-    v = (v_left + v_right) / 2.0
-    w = (v_right - v_left) / (2.0 * R)
-    return v, w
+    return _wheel_vels_to_twist(v_left, v_right, CFG_drive.robot_width)
 
 def reader_loop():
     with Reader('camera.head.jpeg') as r_rgb, \

@@ -3,10 +3,10 @@
 # dependencies = [
 #   "bbos",
 #   "fastapi>=0.115,<1",
-#   "google-genai>=1,<3",
 #   "mediapipe==1.0.1",
 #   "python-dotenv>=1,<2",
 #   "uvicorn>=0.34,<1",
+#   "wsproto>=1.2,<2",
 # ]
 # [tool.uv.sources]
 # bbos = { path = "/home/bracketbot/bbos", editable = true }
@@ -45,10 +45,11 @@ import mediapipe as mp
 import numpy as np
 import uvicorn
 from bbos import Config, Reader
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from action_landmarking import ActionLandmarkRecorder, record_timestamp
+from action_landmarking import ActionLandmarkRecorder, record_timestamp, slam_to_camera
+from visitor_drive import router as visitor_drive_router
 
 
 MODEL_URL = (
@@ -210,7 +211,7 @@ def serialize_result(result: Any, width: int, height: int) -> list[dict[str, Any
     return hands
 
 
-def draw_hands(image: np.ndarray, hands: list[dict[str, Any]], camera: str) -> None:
+def draw_hands(image: np.ndarray, hands: list[dict[str, Any]]) -> None:
     colors = ((40, 230, 255), (255, 90, 220), (80, 255, 120), (255, 180, 60))
     for hand_index, hand in enumerate(hands):
         color = colors[hand_index % len(colors)]
@@ -239,19 +240,6 @@ def draw_hands(image: np.ndarray, hands: list[dict[str, Any]], camera: str) -> N
             2,
             cv2.LINE_AA,
         )
-
-    cv2.rectangle(image, (0, 0), (image.shape[1], 34), (0, 0, 0), -1)
-    cv2.putText(
-        image,
-        f"{camera}  hands: {len(hands)}",
-        (10, 24),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-
 
 class StereoCalibration:
     """Metric fisheye stereo model supplied by the robot's depth daemon."""
@@ -288,6 +276,20 @@ class StereoCalibration:
         self.baseline_m = float(baseline_m)
         self.eye_size = (int(head.width // 2), int(head.height))
         self.path = str(depth.calib_path)
+
+    def project_point(self, point: np.ndarray, eye: int) -> np.ndarray | None:
+        matrix, distortion, rotation, projection = (
+            (self.camera_matrix_1, self.distortion_1, self.rectification_1, self.projection_1)
+            if eye == 0 else
+            (self.camera_matrix_2, self.distortion_2, self.rectification_2, self.projection_2)
+        )
+        raw = rotation.T @ (point + np.linalg.solve(projection[:, :3], projection[:, 3]))
+        if not np.isfinite(raw).all() or raw[2] <= 0:
+            return None
+        pixel = cv2.fisheye.projectPoints(
+            raw.reshape(1, 1, 3), np.zeros(3), np.zeros(3), matrix, distortion,
+        )[0].reshape(2)
+        return pixel if np.isfinite(pixel).all() else None
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -735,7 +737,6 @@ class StereoHandTracker:
         landmarker: Any,
         timestamp_ms: int,
         inference_height: int,
-        camera_name: str,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         started = time.perf_counter()
         resized = cv2.resize(
@@ -750,7 +751,7 @@ class StereoHandTracker:
         )
         result = landmarker.recognize_for_video(media_image, timestamp_ms)
         hands = serialize_result(result, self.inference_width, inference_height)
-        draw_hands(resized, hands, camera_name)
+        draw_hands(resized, hands)
         return resized, {
             "hands": hands,
             "hand_count": len(hands),
@@ -771,23 +772,28 @@ class StereoHandTracker:
                 executor = stack.enter_context(
                     ThreadPoolExecutor(max_workers=2, thread_name_prefix="hand-eye")
                 )
-                reader = stack.enter_context(Reader(CAMERA_TOPIC, keeptime=False))
                 depth_reader = stack.enter_context(
-                    Reader("camera.depth", keeptime=False, aligned_to=reader)
+                    Reader("camera.depth", keeptime=False)
+                )
+                reader = stack.enter_context(
+                    Reader(CAMERA_TOPIC, keeptime=False, aligned_to=depth_reader)
                 )
                 pose_reader = stack.enter_context(
                     Reader("slam.pose", keeptime=False, aligned_to=reader)
                 )
                 health_reader = stack.enter_context(Reader("slam.health", keeptime=False))
-                imu_reader = stack.enter_context(Reader("imu.orientation", keeptime=False))
+                imu_reader = stack.enter_context(
+                    Reader("imu.orientation", keeptime=False, aligned_to=reader)
+                )
                 pitch_rad = 0.0
 
                 while not self._stop.is_set():
-                    if not reader.ready():
+                    if not depth_reader.ready() or not reader.ready():
                         time.sleep(0.001)
                         continue
 
                     started = time.perf_counter()
+                    depth_record = depth_reader.data.copy()
                     source_timestamp_ns = record_timestamp(reader.data)
                     jpeg_len = int(reader.data["jpeg_len"])
                     raw = bytes(reader.data["jpeg"][:jpeg_len])
@@ -817,9 +823,8 @@ class StereoHandTracker:
                             landmarker,
                             timestamp_ms,
                             inference_height,
-                            f"camera_{index + 1}",
                         )
-                        for index, (source, landmarker) in enumerate(zip(source_eyes, trackers))
+                        for source, landmarker in zip(source_eyes, trackers)
                     ]
                     processed = [job.result() for job in jobs]
                     output_images = [item[0] for item in processed]
@@ -833,16 +838,10 @@ class StereoHandTracker:
                     )
                     draw_stereo_positions(output_images, camera_payloads, stereo_result)
 
-                    depth_reader.ready()
                     pose_reader.ready()
                     health_reader.ready()
                     if imu_reader.ready():
                         pitch_rad = math.radians(float(imu_reader.data["rpy"][1]))
-                    depth_record = (
-                        depth_reader.data.copy()
-                        if depth_reader.readable and depth_reader.data is not None
-                        else None
-                    )
                     pose_record = (
                         pose_reader.data.copy()
                         if pose_reader.readable and pose_reader.data is not None
@@ -863,18 +862,49 @@ class StereoHandTracker:
                     )
                     action_state = self.action_landmarks.snapshot()
 
+                    pose_ts = record_timestamp(pose_record)
+                    if (pose_ts is not None and source_timestamp_ns is not None
+                            and abs(pose_ts-source_timestamp_ns) <= 100_000_000
+                            and self.action_landmarks._slam_healthy(health_record)):
+                        for item in self.action_landmarks.records():
+                            if item.get("calibration_revision") != self.action_landmarks.calibration_revision:
+                                continue
+                            point = slam_to_camera(
+                                np.array([item["point_slam_m"][axis] for axis in "xyz"]),
+                                self.action_landmarks.base_from_camera, pose_record, pitch_rad,
+                            )
+                            label = item["action"]["display_name"]
+                            color = item["action"]["marker_color"].lstrip("#")
+                            bgr = tuple(int(color[i:i+2], 16) for i in (4, 2, 0))
+                            for eye, output in enumerate(output_images):
+                                pixel = self.calibration.project_point(point, eye)
+                                if pixel is None:
+                                    continue
+                                x, y = np.rint(pixel * scale).astype(int)
+                                h, w = output.shape[:2]
+                                if not (0 <= x < w and 0 <= y < h):
+                                    continue
+                                cv2.circle(output, (x, y), 8, (0, 0, 0), -1, cv2.LINE_AA)
+                                cv2.circle(output, (x, y), 5, bgr, -1, cv2.LINE_AA)
+                                text_width = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .5, 1)[0][0]
+                                at = (max(0, min(x+12, w-text_width-2)), max(16, y-12))
+                                for thickness, ink in ((3, (0, 0, 0)), (1, bgr)):
+                                    cv2.putText(output, label, at, cv2.FONT_HERSHEY_SIMPLEX,
+                                                .5, ink, thickness, cv2.LINE_AA)
+
                     combined = np.hstack(output_images)
-                    cv2.rectangle(combined, (0, 34), (combined.shape[1], 66), (0, 0, 0), -1)
-                    cv2.putText(
-                        combined,
-                        f"ACTION {action_state['state'].upper()}: {action_state['message']}",
-                        (10, 57),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.55,
-                        (80, 255, 120) if action_state["state"] == "recording" else (220, 220, 220),
-                        2,
-                        cv2.LINE_AA,
-                    )
+                    if action_state["state"] != "idle":
+                        cv2.rectangle(combined, (0, 34), (combined.shape[1], 66), (0, 0, 0), -1)
+                        cv2.putText(
+                            combined,
+                            f"ACTION {action_state['state'].upper()}: {action_state['message']}",
+                            (10, 57),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55,
+                            (80, 255, 120) if action_state["state"] == "recording" else (220, 220, 220),
+                            2,
+                            cv2.LINE_AA,
+                        )
                     ok, encoded = cv2.imencode(
                         ".jpg",
                         combined,
@@ -918,6 +948,7 @@ class StereoHandTracker:
 
 
 app = FastAPI(title="BracketBot stereo hand tracking")
+app.include_router(visitor_drive_router)
 tracker: StereoHandTracker | None = None
 
 
@@ -1048,23 +1079,54 @@ async def stream() -> StreamingResponse:
     )
 
 
+@app.get("/slam-map")
+def slam_map():
+    reader = Reader("mapping.voxels", keeptime=False)
+    try:
+        if not reader.ready():
+            raise HTTPException(503, "Waiting for the SLAM map")
+        data = reader.data
+        timestamp_ns = int(data['timestamp'].astype('int64'))
+        if not 0 <= time.time_ns() - timestamp_ns < 5_000_000_000:
+            raise HTTPException(503, "SLAM map is not updating")
+        count = int(data['num_voxels'])
+        if count == 0:
+            raise HTTPException(503, "SLAM map is empty")
+        # Bound the live preview payload; the robot retains the full map.
+        step = max(1, math.ceil(count / 40_000))
+        points = data['coords'][:count:step].copy()
+        points = points[:, [0, 2, 1]]
+        points[:, 2] *= -1  # SLAM z-up to Three.js y-up.
+        return {
+            'positions': points.round(4).reshape(-1).tolist(),
+            'colors': data['colors'][:count:step].reshape(-1).tolist(),
+            'pointSize': float(Config('mapping').voxel_size_m),
+            'totalPoints': count,
+            'robot': {'x': float(data['robot_pos'][0]),
+                      'y': float(data['robot_pos'][1]),
+                      'heading': float(data['robot_heading'])},
+        }
+    finally:
+        reader.__exit__(None, None, None)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>BracketBot hand tracking</title>
 <style>
-body{margin:0;background:#0b0d10;color:#e8edf2;font:14px system-ui,sans-serif}
-main{max-width:1320px;margin:auto;padding:18px}h1{font-size:22px;margin:0 0 12px}
-img{display:block;width:100%;height:auto;background:#000;border-radius:10px}
-#status{margin:10px 0;color:#9fe3c2}pre{white-space:pre-wrap;max-height:300px;overflow:auto;
-background:#151a20;padding:12px;border-radius:8px;color:#bdc9d6}
+body{margin:0;overflow:hidden;background:#0b0d10;color:#e8edf2;font:14px system-ui,sans-serif}
+main{box-sizing:border-box;max-width:1320px;height:100dvh;margin:auto;padding:18px;display:flex;flex-direction:column}
+h1{flex-shrink:0;font-size:22px;margin:0 0 12px}
+img{display:block;width:100%;min-height:0;flex:1;object-fit:contain;background:#000;border-radius:10px}
+#status{flex-shrink:0;margin:10px 0;color:#9fe3c2}pre{display:none}
 </style></head><body><main><h1>Stereo hand tracking</h1>
 <img src="/stream" alt="Camera 1 and camera 2 with hand landmarks">
 <div id="status">starting…</div><pre id="data"></pre></main>
 <script>
 async function refresh(){try{const r=await fetch('/landmarks',{cache:'no-store'}),j=await r.json();
-document.getElementById('status').textContent=`${j.status} · ${j.fps||0} fps · ${j.inference_ms||0} ms · camera 1: ${j.camera_1?.hand_count||0} hand(s) · camera 2: ${j.camera_2?.hand_count||0} hand(s) · 3D matches: ${j.stereo?.match_count||0} · thumbs up: ${j.stereo?.thumbs_up_count||0} · action: ${j.action_landmarking?.state||'unavailable'}`;
+document.getElementById('status').textContent=`${j.status} · ${j.fps||0} fps · ${j.inference_ms||0} ms · camera 1: ${j.camera_1?.hand_count||0} hand(s) · camera 2: ${j.camera_2?.hand_count||0} hand(s) · 3D matches: ${j.stereo?.match_count||0} · thumbs up: ${j.stereo?.thumbs_up_count||0} · action: ${j.action_landmarking?.state||'unavailable'} · heard: ${j.action_landmarking?.label?.replaceAll('_',' ')||'none yet'} · voice: ${j.action_landmarking?.speech_status||'unavailable'}`;
 const summary={action_landmarking:j.action_landmarking,stereo:j.stereo,camera_1:j.camera_1,camera_2:j.camera_2};document.getElementById('data').textContent=JSON.stringify(summary,null,2)}catch(e){document.getElementById('status').textContent=e}}
 setInterval(refresh,500);refresh();
 </script></body></html>"""
@@ -1097,6 +1159,7 @@ def main() -> None:
             port=args.port,
             log_level="warning",
             access_log=False,
+            timeout_graceful_shutdown=2,
         )
     finally:
         tracker.close()

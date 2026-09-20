@@ -49,6 +49,18 @@ quality, synchronized sensor timestamps, map revision, and calibration revision.
 
 The hand service exposes current state and saved records at `GET /actions`.
 
+## Speech setup
+
+Set `OPENROUTER_API_KEY` in `~/.config/realbot/speech.env` on the robot (mode
+`600`, outside Git), and enable the bbOS microphone daemon. Speech uses
+`google/gemini-2.5-flash` through OpenRouter's audio-input API. Only active
+recording windows submit short WAV clips; idle audio is discarded. The listener
+accepts only the two exact action IDs, retries request failures, and discards
+responses belonging to a recording window that has ended. `/actions` reports
+microphone readiness, recognition status, and the last recognized label.
+Microphone capture continues during requests, with at most one request in flight.
+The viewer keeps the accepted label visible separately from SLAM/pointing status.
+
 ## Display contract
 
 The map renders each saved point at its SLAM-map XYZ position, with the action's
