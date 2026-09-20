@@ -18,6 +18,7 @@ elif grep -q "PAUSED" <<<"$last"; then
     tmux send-keys -t act-v3 r
     echo "policy restarted from the current pose."
 else
-    echo "policy is already running (last log line: ${last:0:60})"
+    tmux send-keys -t act-v3 Space; sleep 0.5; tmux send-keys -t act-v3 r
+    echo "policy was running: paused and restarted from the current pose."
 fi
 echo "watch it:  tmux a -t act-v3   (E = torque off, Space = pause, Q = park)"
