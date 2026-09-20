@@ -75,4 +75,4 @@ kills them. The managed session is `visitor-act`.
 A later click starts a new attempt. An attempt also pauses after 120 seconds; the policy
 does not detect that the door is open, so press Stop once it opens. WASD and Free Cam stay
 locked while the policy owns the arms. At the end, an operator can park and exit with
-`tmux send-keys -t visitor-act q`; only do this when the parking path is clear.
+`tmux send-keys -t visitor-act q q`; only do this when the parking path is clear.

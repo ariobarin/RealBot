@@ -224,7 +224,7 @@ if not args.no_demo_pose and not args.hold_start:
     print('RAMPING to the demo start pose over 4 s ...', flush=True)
     ramp_to(start_pose, 4.0)
     time.sleep(.5)
-print(f'RUNNING at up to {args.hz:g} Hz for {args.duration:g}s (0=unlimited). Space/Ctrl-C pauses, R restarts from here, N ramps back to the demo start pose and restarts, E cuts torque, Q parks/exits.', flush=True)
+print(f'RUNNING at up to {args.hz:g} Hz for {args.duration:g}s (0=unlimited). Space/Ctrl-C pauses, R restarts from here, N ramps back to the demo start pose and restarts, E cuts torque, Q twice parks/exits; leave tmux with Ctrl-b d.', flush=True)
 started = time.monotonic()
 last_log = -1
 last_sent = None
@@ -232,6 +232,7 @@ steps = 0
 target = None
 stale_since = None
 clamped = 0
+last_q = -10.0
 try:
     with torch.inference_mode():
         while True:
@@ -250,6 +251,10 @@ try:
                     key = ' '  # Remote attempts start only through a fresh leased command.
                 if key == 'e': robot._estop_now()
                 if key == 'q':
+                    if time.monotonic() - last_q > 2.0:
+                        last_q = time.monotonic()
+                        print('press Q again within 2 s to park and exit (to leave tmux without stopping, use Ctrl-b then d)', flush=True)
+                        continue
                     robot.disconnect()
                     break
                 if key == 'n':                       # new attempt: back to the demo start pose, then run again
@@ -336,6 +341,10 @@ finally:
             key = sys.stdin.read(1).lower()
             if key == 'e': robot._estop_now()
             if key == 'q':
+                if time.monotonic() - last_q > 2.0:
+                    last_q = time.monotonic()
+                    print('press Q again within 2 s to park and exit (to leave tmux without stopping, use Ctrl-b then d)', flush=True)
+                    continue
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
                 robot.disconnect()
                 break
