@@ -21,13 +21,14 @@ server forwards only that room's actions and stream requests. Missing service,
 malformed replies and disconnections clear live status and retry. Visitors do
 not receive the setup panel.
 
-Production needs an authenticated, room-authorized server route at
-/api/action-points/:roomId/actions and /stream. Vite's local proxy is not deployed
-by a static build and is not a production authorization boundary. Existing
-LiveKit session configuration is still required for the shared driving view.
+On Vercel, enter robot code `0187` or `0188` in the setup view. The code selects
+the robot independently of the saved map ID. Recorder status and saved points
+use the controller-scoped `realbot.action_points.read` LiveKit RPC; the main
+camera already carries the annotated video. This only reads the recorder and
+does not start an action. The robot bridge must include this RPC, and its
+LiveKit session must be unexpired. The local HTTP proxy remains for local use.
 
 A downloaded map does not restore robot localization. Capture still requires
 healthy live SLAM, synchronized depth and a microphone. Records carry live SLAM
 coordinates and revision; this UI does not imply they are aligned to the saved
-map, physically tested, or ready to execute. Map alignment and production routing
-remain separate integration work.
+map, physically tested, or ready to execute. Map alignment remains separate work.

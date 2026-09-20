@@ -152,6 +152,15 @@ async def maps(room, http, controller):
         await asyncio.sleep(1)
 
 
+async def read_action_points(controller, caller):
+    if caller != controller:
+        raise ValueError('Unauthorized controller')
+    async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=2) as http:
+        response = await http.get('/actions')
+        response.raise_for_status()
+        return json.dumps(response.json())
+
+
 async def run(config, freecam_path=None, stationary=False):
     from livekit import rtc
     from bbos.daemons.remote_session import session as media
@@ -231,6 +240,9 @@ async def run(config, freecam_path=None, stationary=False):
         except ValueError as error:
             raise rtc.RpcError(2001, str(error)) from None
 
+    async def action_points(data):
+        return await read_action_points(config.controller, data.caller_identity)
+
     async def state():
         while not shutdown.is_set() and time.time() < config.expires:
             await actions.tick()
@@ -252,6 +264,7 @@ async def run(config, freecam_path=None, stationary=False):
             room.local_participant.register_rpc_method('realbot.keyboard.stop', stop)
             room.local_participant.register_rpc_method('realbot.freecam.command', freecam_command)
             room.local_participant.register_rpc_method('realbot.action.command', action_command)
+            room.local_participant.register_rpc_method('realbot.action_points.read', action_points)
             print('LiveKit connected; publishing annotated left camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
                 tasks = [asyncio.create_task(camera(room, http, media, relay, freecam, actions, config.controller)),

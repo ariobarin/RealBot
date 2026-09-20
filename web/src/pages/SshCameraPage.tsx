@@ -21,6 +21,7 @@ export function SshCameraPage({ setup = false }: { setup?: boolean }) {
 export function RobotCameraPanel({ robotId, embedded = false, setup = false }: { robotId?: string; embedded?: boolean; setup?: boolean }) {
   const params = useParams()
   const roomId = robotId || params.roomId
+  const [connectedRobot, setConnectedRobot] = useState('')
   const [accessCode, setAccessCode] = useState(() => visitorAccessCode(roomId))
   const [robotRole, setRobotRole] = useState<'mobile' | 'act' | null>(null)
   const [connectionError, setConnectionError] = useState('')
@@ -37,6 +38,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
   const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
+  const readActionPoints = useCallback(() => client.readActionPoints(), [client])
   async function runPolicy() {
     setActionPending(true)
     setActionError('')
@@ -54,15 +56,16 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
     const abort = new AbortController()
     const connection = client
     const session = import.meta.env.PROD
-      ? requestVisitorSession(accessCode, roomId, abort.signal)
+      ? requestVisitorSession(accessCode, setup ? undefined : roomId, abort.signal)
       : fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store' }).then(async (response) => {
         if (!response.ok) throw new Error('Robot session unavailable')
-        return { ...parseViewerSession(await response.json()), robotRole: roomId === '0188' ? 'act' as const : 'mobile' as const }
+        return { ...parseViewerSession(await response.json()), roomId, robotRole: roomId === '0188' ? 'act' as const : 'mobile' as const }
       })
     session
       .then((session) => {
         if (!abort.signal.aborted) {
           setRobotRole(session.robotRole)
+          setConnectedRobot(session.roomId || '')
           return connection.connect(session)
         }
       })
@@ -75,7 +78,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         }
       })
     return () => { abort.abort(); connection.disconnect() }
-  }, [attempt, accessCode, roomId, client])
+  }, [attempt, accessCode, roomId, setup, client])
 
   useEffect(() => {
     if (!view.camera || !video.current) return
@@ -92,7 +95,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
     <section aria-label={`Robot ${roomId}`} className="flex min-h-0 flex-1 flex-col">
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
+          <h1 className="text-2xl font-semibold">{connectedRobot || roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
           <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.'
             : actions?.state.available ? 'Position at the box, then click its circle to open it. Stop when it opens.'
               : 'Saved action locations appear in the camera view.'}</p>
@@ -100,7 +103,8 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         {!embedded && !setup && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
         {!embedded && <Link to={setup ? '/realtor' : '/'} className="text-sm underline underline-offset-4">{setup ? 'Your spaces' : 'Leave tour'}</Link>}
       </header>
-      {setup && roomId && <ActionPointsPanel key={roomId} roomId={roomId} />}
+      {setup && roomId && (!livekit || view.robotOnline) && <ActionPointsPanel key={`${roomId}/${connectedRobot}`}
+        roomId={roomId} readSnapshot={livekit ? readActionPoints : undefined} />}
       {livekit && import.meta.env.PROD && !accessCode ? (
         <form className="m-auto flex w-full max-w-sm flex-col gap-4" onSubmit={(event) => {
           event.preventDefault()

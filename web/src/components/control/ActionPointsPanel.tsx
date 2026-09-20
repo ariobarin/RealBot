@@ -18,7 +18,7 @@ interface ActionSnapshot {
   }>
 }
 
-export function ActionPointsPanel({ roomId }: { roomId: string }) {
+export function ActionPointsPanel({ roomId, readSnapshot }: { roomId: string; readSnapshot?: () => Promise<unknown> }) {
   const [open, setOpen] = useState(false)
   const [snapshot, setSnapshot] = useState<ActionSnapshot>()
   const [error, setError] = useState('')
@@ -30,12 +30,15 @@ export function ActionPointsPanel({ roomId }: { roomId: string }) {
     let timer: ReturnType<typeof setTimeout>
     async function refresh() {
       try {
-        const response = await fetch(`${base}/actions`, {
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(4000)]),
-          cache: 'no-store',
-        })
-        if (!response.ok) throw new Error('Recorder unavailable')
-        const data = (await response.json()) as ActionSnapshot
+        let data: ActionSnapshot
+        if (readSnapshot) data = await readSnapshot() as ActionSnapshot
+        else {
+          const response = await fetch(`${base}/actions`, {
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(4000)]), cache: 'no-store',
+          })
+          if (!response.ok) throw new Error('Recorder unavailable')
+          data = await response.json() as ActionSnapshot
+        }
         if (
           typeof data.recording?.state !== 'string' ||
           typeof data.recording?.message !== 'string' ||
@@ -68,7 +71,7 @@ export function ActionPointsPanel({ roomId }: { roomId: string }) {
       controller.abort()
       clearTimeout(timer)
     }
-  }, [base, open])
+  }, [base, open, readSnapshot])
 
   return (
     <details
@@ -90,7 +93,7 @@ export function ActionPointsPanel({ roomId }: { roomId: string }) {
             <Link className="mt-2 inline-block text-sm underline" to={`/map/${encodeURIComponent(roomId)}`}>
               View saved room map
             </Link>
-            {snapshot && (
+            {snapshot && !readSnapshot && (
               <img
                 src={`${base}/stream`}
                 alt="Action-point camera with hand tracking"

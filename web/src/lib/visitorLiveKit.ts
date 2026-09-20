@@ -131,6 +131,13 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     } catch { /* Ignore malformed telemetry. */ }
   }
 
+  async readActionPoints(): Promise<unknown> {
+    if (!this.room || !this.view.robotOnline) throw new Error('Robot disconnected')
+    const reply = await this.room.localParticipant.performRpc({ destinationIdentity: this.robot,
+      method: 'realbot.action_points.read', payload: '{}', responseTimeout: 3000 })
+    return JSON.parse(reply)
+  }
+
   async startAction(id: string) {
     if (!this.room || !this.view.robotOnline || performance.now() - this.actionAt > 750)
       throw new Error('Action locations are not ready')

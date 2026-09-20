@@ -63,3 +63,20 @@ def test_timeout_or_stop_closes_local_control_and_invalidates_old_packets(timeou
         relay.receive('controller', packet(sequence=2))
         assert relay.commands.empty()
     asyncio.run(run())
+
+def test_action_points_snapshot_is_scoped_and_read_only(monkeypatch):
+    import httpx
+    from visitor_livekit import read_action_points
+    requests = []
+    snapshot = {'recording': {'state': 'idle', 'message': 'Ready'}, 'landmarks': []}
+    def handler(request):
+        requests.append((request.method, str(request.url)))
+        return httpx.Response(200, json=snapshot)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(handler)))
+    with pytest.raises(ValueError, match='Unauthorized'):
+        asyncio.run(read_action_points('controller', 'stranger'))
+    assert requests == []
+    assert json.loads(asyncio.run(read_action_points('controller', 'controller'))) == snapshot
+    assert requests == [('GET', 'http://127.0.0.1:8006/actions')]
