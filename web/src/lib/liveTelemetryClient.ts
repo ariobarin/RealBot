@@ -41,11 +41,12 @@ export class LiveTelemetryClient {
     this.room = room
     this.update({ connection: 'connecting', error: undefined })
     const current = () => this.room === room
+    const cameraTrack = session.cameraTrack || 'cam-wrist'
     const refresh = () => {
       if (!current()) return
       const robot = room.remoteParticipants.get(session.robotIdentity)
       const publication = [...(robot?.videoTrackPublications.values() ?? [])].find(
-        (pub) => pub.trackName === 'cam-wrist' && !pub.isMuted,
+        (pub) => pub.trackName === cameraTrack && !pub.isMuted,
       )
       const track = publication?.videoTrack
       const rightTrack = [...(robot?.videoTrackPublications.values() ?? [])].find(
@@ -71,7 +72,7 @@ export class LiveTelemetryClient {
           pub.setSubscribed(
             participant.identity === session.robotIdentity &&
               pub.kind === Track.Kind.Video &&
-              ['cam-wrist', 'cam-right'].includes(pub.trackName),
+              [cameraTrack, 'cam-right'].includes(pub.trackName),
           )
         }
       }

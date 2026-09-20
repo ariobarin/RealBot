@@ -5,7 +5,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 
 const mocks = vi.hoisted(() => ({
-  changed: (_view: unknown) => {}, session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(), runScript: vi.fn(),
+  changed: (_view: unknown) => {}, connect: vi.fn(), session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(), runScript: vi.fn(),
 }))
 vi.mock('../lib/visitorSession', () => ({ requestVisitorSession: mocks.session, visitorAccessCode: () => '' }))
 vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
@@ -16,7 +16,8 @@ vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
     mocks.changed = changed
     this.actions = actions
   }
-  async connect() {
+  async connect(session: unknown) {
+    mocks.connect(session)
     this.changed({ connection: 'connected', robotOnline: true })
     this.actions({ points: [], state: { available: true, owned: false, phase: 'idle', attempt: '' } })
   }
@@ -33,6 +34,16 @@ beforeAll(async () => {
   vi.stubEnv('PROD', true)
   vi.stubEnv('VITE_ROBOT_TRANSPORT', 'livekit')
   RobotCameraPanel = (await import('./SshCameraPage')).RobotCameraPanel
+})
+
+it.each([false, true])('selects the camera for setup=%s', async (setup) => {
+  mocks.session.mockResolvedValue({ roomId: '0188', robotRole: 'act' })
+  render(<MemoryRouter><RobotCameraPanel setup={setup} /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Robot access code'), { target: { value: '0188' } })
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }))
+  await waitFor(() => expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({
+    cameraTrack: setup ? 'cam-setup' : 'cam-wrist',
+  })))
 })
 
 it('runs the three demo scripts from the panel and keeps Stop available during a run', async () => {

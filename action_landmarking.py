@@ -529,6 +529,18 @@ class ActionLandmarkRecorder:
             self._label_confidence = float(confidence)
             self._message = f"Heard {normalized.replace('_', ' ')}; waiting for a stable point."
 
+    def pause(self) -> None:
+        with self._lock:
+            self.keywords.stop_listening()
+            self._state = "idle"
+            self._message = "Show a close thumbs-up to begin."
+            self._thumb_since = None
+            self._thumb_latched = False
+            self._label = None
+            self._label_confidence = 0.0
+            self._samples.clear()
+            self._stable_point = None
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {

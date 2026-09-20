@@ -82,7 +82,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         if (!abort.signal.aborted) {
           setRobotRole(session.robotRole)
           setConnectedRobot(session.roomId || '')
-          return connection.connect(session)
+          return connection.connect({ ...session, cameraTrack: setup ? 'cam-setup' : 'cam-wrist' })
         }
       })
       .catch((error: unknown) => {
@@ -156,7 +156,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
           <div className="relative aspect-[4/3] w-[min(100cqw,133.333cqh)] overflow-hidden rounded-2xl bg-black">
             {livekit ? <video ref={video} autoPlay playsInline muted className="h-full w-full object-contain" /> : <img
               key={attempt}
-              src={`/robot-camera/stream?attempt=${attempt}`}
+              src={`/robot-camera/stream?annotated=${setup}&attempt=${attempt}`}
               alt="Left head camera with saved action locations"
               onError={() => { setFailed(true); setDriving(false) }}
               className="w-[200%] max-w-none"

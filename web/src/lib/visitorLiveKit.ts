@@ -20,6 +20,7 @@ export interface ActionState { available: boolean; owned: boolean; phase: string
 export interface ActionView { points: ActionPoint[]; state: ActionState }
 
 export class VisitorLiveKit extends LiveTelemetryClient {
+  private setupView = false
   private robot = ''
   private clock = 0
   private clockAt = 0
@@ -49,6 +50,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   }
 
   override async connect(session: ViewerSession) {
+    this.setupView = session.cameraTrack === 'cam-setup'
     this.robot = session.robotIdentity
     await super.connect(session)
   }
@@ -66,6 +68,17 @@ export class VisitorLiveKit extends LiveTelemetryClient {
 
   protected override onConnected() {
     const room = this.room!
+    let setupAt = -Infinity
+    let setupPending = false
+    const keepSetupActive = () => {
+      if (!this.setupView || setupPending || document.hidden || performance.now() - setupAt < 1000) return
+      setupAt = performance.now()
+      setupPending = true
+      void room.localParticipant.performRpc({ destinationIdentity: this.robot,
+        method: 'realbot.camera.setup', payload: '{}', responseTimeout: 2000 })
+        .catch(() => {}).finally(() => { setupPending = false })
+    }
+    keepSetupActive()
     if (this.mapRoom !== room) {
       this.mapRoom = room
       room.registerByteStreamHandler('realbot.slam_map', async (reader, participant) => {
@@ -91,6 +104,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     }
     if (this.watch) clearInterval(this.watch)
     this.watch = setInterval(() => {
+      keepSetupActive()
       if (this.view.rightCameraFresh && performance.now() - this.rightCameraAt > 750)
         this.update({ rightCameraFresh: false })
       if (performance.now() - this.clockAt > 750) {

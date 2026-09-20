@@ -106,3 +106,20 @@ def test_action_points_snapshot_is_scoped_and_read_only(monkeypatch):
     assert requests == []
     assert json.loads(asyncio.run(read_action_points('controller', 'controller'))) == snapshot
     assert requests == [('GET', 'http://127.0.0.1:8006/actions')]
+
+
+def test_only_controller_can_enable_setup_tracking(monkeypatch):
+    import httpx
+    from visitor_livekit import enable_setup_camera
+    requests = []
+    def handler(request):
+        requests.append((request.method, str(request.url)))
+        return httpx.Response(200, json={'active': True})
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(handler)))
+    with pytest.raises(ValueError, match='Unauthorized'):
+        asyncio.run(enable_setup_camera('controller', 'stranger'))
+    assert requests == []
+    assert asyncio.run(enable_setup_camera('controller', 'controller')) == '{}'
+    assert requests == [('POST', 'http://127.0.0.1:8006/tracking')]
