@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { PageShell } from '../components/ui/PageShell'
 import { FreeCamButton } from '../components/control/FreeCamButton'
+import { RemoteFreeCam } from '../components/control/RemoteFreeCam'
 import { startKeyboardDrive } from '../lib/keyboardDrive'
 import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
-import { VisitorLiveKit } from '../lib/visitorLiveKit'
+import { VisitorLiveKit, type FreeCamState } from '../lib/visitorLiveKit'
 import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
 import { requestVisitorSession, visitorAccessCode } from '../lib/visitorSession'
@@ -21,14 +22,19 @@ export function SshCameraPage() {
   const [driveStatus, setDriveStatus] = useState('Enable drive to use WASD')
   const [view, setView] = useState<LiveView>({ connection: 'disconnected', robotOnline: false, telemetryFresh: false })
   const [map, setMap] = useState<MapSnapshot | null>(null)
+  const [freeCam, setFreeCam] = useState<FreeCamState | null>(null)
+  const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
-  const client = useRef<VisitorLiveKit | null>(null)
+  const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam))
+  const changeView = useCallback((_viewing: boolean) => {
+    setDriving(false)
+    setDriveStatus('Drive stopped')
+  }, [])
 
   useEffect(() => {
     if (!livekit || (import.meta.env.PROD && !accessCode)) return
     const abort = new AbortController()
-    const connection = new VisitorLiveKit(setView, setMap)
-    client.current = connection
+    const connection = client
     const session = import.meta.env.PROD
       ? requestVisitorSession(accessCode, roomId, abort.signal)
       : fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store' }).then(async (response) => {
@@ -45,8 +51,8 @@ export function SshCameraPage() {
           } else setFailed(true)
         }
       })
-    return () => { abort.abort(); connection.disconnect(); client.current = null }
-  }, [attempt, accessCode, roomId])
+    return () => { abort.abort(); connection.disconnect() }
+  }, [attempt, accessCode, roomId, client])
 
   useEffect(() => {
     if (!view.camera || !video.current) return
@@ -56,15 +62,15 @@ export function SshCameraPage() {
   }, [view.camera, failed])
 
   useEffect(() => {
-    if (driving) return startKeyboardDrive(setDriveStatus, () => setDriving(false), livekit ? client.current!.connectKeyboard : undefined)
-  }, [driving])
+    if (driving) return startKeyboardDrive(setDriveStatus, () => setDriving(false), livekit ? client.connectKeyboard : undefined)
+  }, [driving, client])
 
   return (
     <PageShell wide viewport>
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{view.camera ? 'Live camera' : 'Connect to robot'}</h1>
-          <p className="mt-1 text-sm text-ink-2">Saved action locations appear in the camera view.</p>
+          <h1 className="text-2xl font-semibold">{viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
+          <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.' : 'Saved action locations appear in the camera view.'}</p>
         </div>
         <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>
       </header>
@@ -109,20 +115,20 @@ export function SshCameraPage() {
                 setDriving(false); setAttempt((value) => value + 1)
               }}>Reconnect</button>}
             </div>}
-            <div className="absolute bottom-3 right-3 aspect-[4/3] w-[34%] min-w-32 max-w-72">
+            {!viewingHand && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[34%] min-w-32 max-w-72">
               <LiveSlamMap snapshot={livekit ? map : undefined} />
-            </div>
+            </div>}
           </div>
         </div>
       )}
       <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>
-        <FreeCamButton onOpen={() => {
+        {livekit ? <RemoteFreeCam client={client} state={freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
           setDriving(false)
           setDriveStatus('Drive stopped for Free Cam')
-        }} />
+        }} />}
         <button
-          disabled={!driving && (failed || (livekit && !view.camera))}
+          disabled={!driving && (failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
           className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
           onClick={() => {
             setDriveStatus(driving ? 'Drive stopped' : 'Connecting drive…')

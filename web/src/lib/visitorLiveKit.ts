@@ -4,6 +4,17 @@ import type { ViewerSession } from './liveTelemetry'
 import type { KeyboardConnector } from './keyboardDrive'
 import type { MapSnapshot } from '../components/map/LiveSlamMap'
 
+export interface FreeCamState {
+  available: boolean
+  viewing: boolean
+  phase: string
+  ready?: boolean
+  moving?: boolean
+  reason?: string
+  notice?: string
+  offsets?: number[]
+}
+
 export class VisitorLiveKit extends LiveTelemetryClient {
   private robot = ''
   private clock = 0
@@ -13,10 +24,16 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   private watch?: ReturnType<typeof setInterval>
   private drive?: { nonce: string; active: boolean; closed: (reason: string) => void }
   private mapChanged: (map: MapSnapshot | null) => void
+  private freeCamChanged: (state: FreeCamState | null) => void
+  private freeCamNonce = ''
+  private freeCamSequence = 0
+  private freeCamSending = false
 
-  constructor(changed: (view: LiveView) => void, mapChanged: (map: MapSnapshot | null) => void) {
+  constructor(changed: (view: LiveView) => void, mapChanged: (map: MapSnapshot | null) => void,
+    freeCamChanged: (state: FreeCamState | null) => void = () => {}) {
     super(changed)
     this.mapChanged = mapChanged
+    this.freeCamChanged = freeCamChanged
   }
 
   override async connect(session: ViewerSession) {
@@ -29,6 +46,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     if (this.view.connection !== 'connected' || !this.view.robotOnline) {
       this.drive?.closed('Drive disconnected')
       this.mapChanged?.(null)
+      this.freeCamChanged?.(null)
     }
   }
 
@@ -59,12 +77,19 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     }
     if (this.watch) clearInterval(this.watch)
     this.watch = setInterval(() => {
-      if (performance.now() - this.clockAt > 750) this.drive?.closed('Drive connection interrupted')
+      if (performance.now() - this.clockAt > 750) {
+        this.drive?.closed('Drive connection interrupted')
+        this.freeCamChanged(null)
+      }
       if (performance.now() - this.mapAt > 5000) this.mapChanged(null)
     }, 100)
   }
 
   protected override onRobotData(bytes: Uint8Array, topic?: string) {
+    if (topic === 'realbot.freecam_state' && bytes.length < 2048) {
+      try { this.freeCamChanged(JSON.parse(new TextDecoder().decode(bytes))) } catch { /* Ignore invalid state. */ }
+      return
+    }
     if (topic !== 'realbot.keyboard_state' || bytes.length > 512) return
     try {
       const state = JSON.parse(new TextDecoder().decode(bytes))
@@ -73,6 +98,37 @@ export class VisitorLiveKit extends LiveTelemetryClient {
       this.clockAt = performance.now()
       if (this.drive?.active && state.nonce !== this.drive.nonce) this.drive.closed('Drive stopped. Enable it again to resume.')
     } catch { /* Ignore malformed telemetry. */ }
+  }
+
+  async freeCamCommand(action: string, supported = false) {
+    const room = this.room
+    if (!room || !this.view.robotOnline || performance.now() - this.clockAt > 750)
+      throw new Error('Robot connection is not ready')
+    if (action === 'open') {
+      this.freeCamNonce = crypto.randomUUID()
+      this.freeCamSequence = 0
+    }
+    const nonce = this.freeCamNonce
+    const reply = await room.localParticipant.performRpc({ destinationIdentity: this.robot,
+      method: 'realbot.freecam.command', responseTimeout: 2000,
+      payload: JSON.stringify({ action, nonce, supported,
+        expiresAt: Math.floor(this.clock + performance.now() - this.clockAt + 700) }),
+    })
+    if (this.freeCamNonce === nonce) {
+      if (action === 'close') this.freeCamNonce = ''
+      this.freeCamChanged(JSON.parse(reply))
+    }
+  }
+
+  freeCamPulse(pan: number, tilt: number) {
+    const room = this.room
+    if (!room || !this.freeCamNonce || this.freeCamSending || performance.now() - this.clockAt > 750) return
+    this.freeCamSending = true
+    void room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({
+      nonce: this.freeCamNonce, sequence: ++this.freeCamSequence, pan, tilt,
+      expiresAt: Math.floor(this.clock + performance.now() - this.clockAt + 400),
+    })), { topic: 'realbot.freecam', reliable: false, destinationIdentities: [this.robot] })
+      .catch(() => this.freeCamChanged(null)).finally(() => { this.freeCamSending = false })
   }
 
   connectKeyboard: KeyboardConnector = (ready, closed) => {
@@ -126,6 +182,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     this.watch = undefined
     this.drive?.closed('Drive disconnected')
     this.drive = undefined
+    this.freeCamNonce = ''
     this.clockAt = 0
     super.disconnect()
   }

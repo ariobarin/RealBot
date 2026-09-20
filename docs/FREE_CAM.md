@@ -1,7 +1,7 @@
 # Camera-pose Free Cam
 
-A standalone right-hand camera page using the installed bbOS Rust IK solver.
-It is separate from the LiveKit tour UI.
+A right-hand camera controller using the installed bbOS Rust IK solver.
+The local page and LiveKit tour share the same robot controller.
 
 Start takes exclusive right-arm and stopped-base control, then slowly moves the
 arm to a forward viewing pose. Hold arrows, WASD, or a direction button to look
@@ -72,5 +72,24 @@ ignored `.realbot-demo/freecam.session.json`: `{ "roomId": "0187", "url":
 "http://127.0.0.1:8012/#<current-controller-key>" }`. Refresh this private file
 when the controller restarts. The key is never included in the web build.
 The running tour preview at port 5178 has the same component in SshCameraPage.
-Hosted tour sessions still need a deployed transport; this local connection
-must not be presented as remote LiveKit Free Cam support.
+
+## Hosted tour connection
+
+Run `visitor_livekit.py --config <robot-session.json> --free-cam <connection.json>`
+alongside the existing local controller. The private, chmod-600 connection file
+contains `{"robot":"bracketbot-0187","url":"http://127.0.0.1:8012/#<current-controller-key>"}`.
+Only the robot receives that key. The hosted visitor uses its existing access
+code and room-scoped LiveKit session, without an SSH tunnel or public robot port.
+
+Free Cam stops drive and switches the existing video track to the right wrist.
+Start / resume acquires the arm. Held arrows, WASD, or pointer buttons continuously
+refresh movement; Look forward and Open claw use the same IK controller.
+Back to tour stops and holds the arm, then restores head video. Driving stays
+disabled until torque is explicitly released with the arm supported.
+
+The bridge verifies the controller identity, viewing nonce, increasing input
+sequence and robot-clock deadline. It keeps only the latest input; 600 ms without
+input closes the view and stops the arm. The local 350 ms jog and one-second
+heartbeat limits remain in effect if the bridge fails. Expiry and disconnect
+stop and hold, never release torque. This remains the existing expiring,
+single-controller demo session, not a multi-visitor authorization service.
