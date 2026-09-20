@@ -15,6 +15,8 @@ export interface FreeCamState {
   offsets?: number[]
 }
 
+export interface ActState { phase: string; inPlace?: boolean; reason?: string }
+
 export class VisitorLiveKit extends LiveTelemetryClient {
   private robot = ''
   private clock = 0
@@ -28,12 +30,18 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   private freeCamNonce = ''
   private freeCamSequence = 0
   private freeCamSending = false
+  private actChanged: (state: ActState | null) => void
+  private actNonce = ''
+  private actSequence = 0
+  private actPulseAt = 0
 
   constructor(changed: (view: LiveView) => void, mapChanged: (map: MapSnapshot | null) => void,
-    freeCamChanged: (state: FreeCamState | null) => void = () => {}) {
+    freeCamChanged: (state: FreeCamState | null) => void = () => {},
+    actChanged: (state: ActState | null) => void = () => {}) {
     super(changed)
     this.mapChanged = mapChanged
     this.freeCamChanged = freeCamChanged
+    this.actChanged = actChanged
   }
 
   override async connect(session: ViewerSession) {
@@ -47,6 +55,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
       this.drive?.closed('Drive disconnected')
       this.mapChanged?.(null)
       this.freeCamChanged?.(null)
+      this.actChanged?.(null)
     }
   }
 
@@ -80,12 +89,24 @@ export class VisitorLiveKit extends LiveTelemetryClient {
       if (performance.now() - this.clockAt > 750) {
         this.drive?.closed('Drive connection interrupted')
         this.freeCamChanged(null)
+        this.actChanged(null)
+      }
+      if (this.actNonce && performance.now() - this.actPulseAt > 500 && performance.now() - this.clockAt <= 750) {
+        this.actPulseAt = performance.now()
+        void room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({
+          nonce: this.actNonce, sequence: ++this.actSequence,
+          expiresAt: Math.floor(this.clock + performance.now() - this.clockAt + 1500),
+        })), { topic: 'realbot.act', reliable: false, destinationIdentities: [this.robot] }).catch(() => this.actChanged(null))
       }
       if (performance.now() - this.mapAt > 5000) this.mapChanged(null)
     }, 100)
   }
 
   protected override onRobotData(bytes: Uint8Array, topic?: string) {
+    if (topic === 'realbot.act_state' && bytes.length < 1024) {
+      try { this.actChanged(JSON.parse(new TextDecoder().decode(bytes))) } catch { /* Ignore invalid state. */ }
+      return
+    }
     if (topic === 'realbot.freecam_state' && bytes.length < 2048) {
       try { this.freeCamChanged(JSON.parse(new TextDecoder().decode(bytes))) } catch { /* Ignore invalid state. */ }
       return
@@ -98,6 +119,19 @@ export class VisitorLiveKit extends LiveTelemetryClient {
       this.clockAt = performance.now()
       if (this.drive?.active && state.nonce !== this.drive.nonce) this.drive.closed('Drive stopped. Enable it again to resume.')
     } catch { /* Ignore malformed telemetry. */ }
+  }
+
+  async actCommand(action: 'run' | 'stop') {
+    if (!this.room || !this.view.robotOnline || performance.now()-this.clockAt > 750)
+      throw new Error('Robot connection is not ready')
+    const nonce = action === 'run' ? crypto.randomUUID() : this.actNonce
+    if (action === 'stop') this.actNonce = ''
+    const reply = await this.room.localParticipant.performRpc({ destinationIdentity: this.robot,
+      method: 'realbot.act.command', responseTimeout: 3000,
+      payload: JSON.stringify({ action, nonce, expiresAt: Math.floor(this.clock + performance.now()-this.clockAt + 1500) }),
+    })
+    if (action === 'run') { this.actNonce = nonce; this.actSequence = 0 }
+    this.actChanged(JSON.parse(reply))
   }
 
   async freeCamCommand(action: string, supported = false) {
@@ -183,6 +217,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     this.drive?.closed('Drive disconnected')
     this.drive = undefined
     this.freeCamNonce = ''
+    this.actNonce = ''
     this.clockAt = 0
     super.disconnect()
   }

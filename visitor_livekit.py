@@ -15,6 +15,7 @@ from websockets.asyncio.client import connect
 
 from edge_agent.demo_session import DemoConfig, legacy_guard, single_session
 from visitor_freecam import FreeCamRelay
+from visitor_act import ActRelay
 
 
 class KeyboardRelay:
@@ -145,14 +146,17 @@ async def maps(room, http, controller):
         await asyncio.sleep(1)
 
 
-async def run(config, freecam_path=None):
+async def run(config, freecam_path=None, stationary=False):
     from livekit import rtc
     from bbos.daemons.remote_session import session as media
 
     daemon = Path(media.__file__).parent
     legacy_guard(daemon)
+    if stationary and freecam_path:
+        raise ValueError('Stationary ACT robot cannot enable Free Cam')
     relay = KeyboardRelay(config.controller)
     freecam = FreeCamRelay.load(config.controller, freecam_path) if freecam_path else None
+    act = ActRelay(config.controller) if stationary else None
     control_lock = asyncio.Lock()
     room = rtc.Room()
     shutdown = asyncio.Event()
@@ -162,6 +166,11 @@ async def run(config, freecam_path=None):
     room.on('reconnecting', lambda *_: shutdown.set())
     async def stop_controls():
         await relay.stop()
+        if act:
+            try:
+                await act.stop()
+            except (ValueError, asyncio.TimeoutError):
+                pass
         if freecam:
             try:
                 await freecam.stop()
@@ -178,10 +187,12 @@ async def run(config, freecam_path=None):
             relay.receive(packet.participant.identity, packet.data)
         elif packet.topic == 'realbot.freecam' and freecam:
             freecam.receive(packet.participant.identity, packet.data)
+        elif packet.topic == 'realbot.act' and act:
+            act.receive(packet.participant.identity, packet.data)
     room.on('data_received', received)
 
     async def start(data):
-        if config.mode != 'drive':
+        if config.mode != 'drive' or stationary:
             raise ValueError('Driving is disabled for this session')
         try:
             async with control_lock:
@@ -204,7 +215,13 @@ async def run(config, freecam_path=None):
         async with control_lock:
             return await freecam.command(data.caller_identity, data.payload, relay)
 
+    async def act_command(data):
+        if not act or config.mode != 'drive':
+            raise ValueError('ACT control unavailable for this robot')
+        return await act.command(data.caller_identity, data.payload)
+
     async def state():
+        act_at = 0
         while not shutdown.is_set() and time.time() < config.expires:
             legacy_guard(daemon)
             await room.local_participant.publish_data(
@@ -213,6 +230,11 @@ async def run(config, freecam_path=None):
             if freecam:
                 await room.local_participant.publish_data(
                     json.dumps(await freecam.tick()), reliable=False, topic='realbot.freecam_state',
+                    destination_identities=[config.controller])
+            if act and time.monotonic() - act_at >= .5:
+                act_at = time.monotonic()
+                await room.local_participant.publish_data(
+                    json.dumps(await act.tick()), reliable=False, topic='realbot.act_state',
                     destination_identities=[config.controller])
             await asyncio.sleep(.1)
 
@@ -223,6 +245,7 @@ async def run(config, freecam_path=None):
             room.local_participant.register_rpc_method('realbot.keyboard.start', start)
             room.local_participant.register_rpc_method('realbot.keyboard.stop', stop)
             room.local_participant.register_rpc_method('realbot.freecam.command', freecam_command)
+            room.local_participant.register_rpc_method('realbot.act.command', act_command)
             print('LiveKit connected; publishing annotated left camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
                 tasks = [asyncio.create_task(camera(room, http, media, relay, freecam)),
@@ -245,9 +268,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--free-cam', type=Path, help='Private local Free Cam connection JSON')
+    parser.add_argument('--stationary', action='store_true', help='Stationary ACT robot: run/pause the loaded policy and reject base driving')
     args = parser.parse_args()
     try:
-        asyncio.run(run(DemoConfig.load(args.config), args.free_cam))
+        asyncio.run(run(DemoConfig.load(args.config), args.free_cam, args.stationary))
     except Exception as error:
         print(f'LiveKit session ended: {type(error).__name__}', flush=True)
         raise SystemExit(1) from None
