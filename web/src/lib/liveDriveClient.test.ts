@@ -46,6 +46,26 @@ async function setup() {
 describe('LiveKit visitor driving', () => {
   afterEach(() => vi.useRealTimers())
 
+  it('sends direct live-video clicks as preview, never move, in preview-only mode', async () => {
+    const s = await setup()
+    s.receive({ type: 'state', ready: true, lease: true, canCapture: true, canClick: true, busy: false, previewOnly: true })
+    expect(s.view().previewOnly).toBe(true)
+    s.client.clickDestination(0.4, 0.8)
+    expect(s.commands().at(-1)).toMatchObject({ action: 'move_to_view', u: 0.4, v: 0.8, coordinateSpace: 'normalized_camera' })
+    expect(s.commands().some((p) => p.action === 'move')).toBe(false)
+    s.client.disconnect()
+  })
+
+  it('sends one normalized live-video click without a capture-image round trip', async () => {
+    const s = await setup()
+    s.receive({ type: 'state', ready: true, lease: true, canCapture: true, canClick: true, busy: false })
+    s.client.clickDestination(0.25, 0.75)
+    expect(s.commands()).toHaveLength(1)
+    expect(s.commands()[0]).toMatchObject({ action: 'move_to_view', u: 0.25, v: 0.75, coordinateSpace: 'normalized_camera' })
+    expect(() => s.client.clickDestination(0.5, 0.5)).toThrow()
+    s.client.disconnect()
+  })
+
   it('requires robot state, filters identities/topics, targets data without media publication', async () => {
     const s = await setup()
     expect(() => s.client.chooseDestination()).toThrow()

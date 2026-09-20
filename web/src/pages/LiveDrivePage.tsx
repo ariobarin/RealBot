@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { CircleStop, Crosshair, Video } from 'lucide-react'
+import { CircleStop, Video } from 'lucide-react'
 import { LiveDriveClient, type DriveView } from '../lib/liveDriveClient'
 import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
@@ -17,6 +17,7 @@ export function LiveDrivePage() {
   const [drive, setDrive] = useState<DriveView>({
     available: false,
     canCapture: false,
+    canClick: false,
     busy: false,
     status: 'Connect to see the robot.',
   })
@@ -25,6 +26,7 @@ export function LiveDrivePage() {
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
   const [identity, setIdentity] = useState('')
+  const [marker, setMarker] = useState<{ u: number; v: number }>()
   const [accessCode, setAccessCode] = useState('')
   const client = useRef<LiveDriveClient | null>(null)
   const request = useRef<AbortController | null>(null)
@@ -119,15 +121,14 @@ export function LiveDrivePage() {
       setError(err instanceof Error ? err.message : 'Command unavailable.')
     }
   }
-  const selectFloor = (event: MouseEvent<HTMLImageElement>) => {
+  const selectFloor = (event: MouseEvent<HTMLVideoElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
-    // Image is rendered at its actual aspect ratio, with no object-fit crop or padding.
-    perform(() =>
-      client.current?.move(
-        (event.clientX - rect.left) / rect.width,
-        (event.clientY - rect.top) / rect.height,
-      ),
-    )
+    const u = (event.clientX - rect.left) / rect.width
+    const v = (event.clientY - rect.top) / rect.height
+    perform(() => {
+      client.current?.clickDestination(u, v)
+      setMarker({ u, v })
+    })
   }
 
   return (
@@ -216,6 +217,7 @@ export function LiveDrivePage() {
             onClick={() => {
               request.current?.abort()
               setPending(false)
+              setMarker(undefined)
               client.current?.disconnect()
             }}
           >
@@ -229,25 +231,34 @@ export function LiveDrivePage() {
           {error || view.error}
         </p>
       )}
+      {drive.previewOnly && (
+        <p role="note" className="my-3 rounded-lg bg-amber-100 p-3 text-amber-950">
+          Preview only — movement is disabled. Click the live camera yourself.
+          The robot will validate your point and report coordinates or explain why it cannot be used.
+        </p>
+      )}
       <div className="relative grid min-h-72 place-items-center overflow-hidden rounded-2xl bg-black">
-        <video
-          ref={video}
-          autoPlay
-          playsInline
-          muted
-          className="max-h-[65vh] w-full object-contain"
-          hidden={!view.camera || !!drive.capture}
-        />
-        {drive.capture && (
-          <img
-            src={drive.capture.image}
-            alt="Captured camera view: click a clear floor destination"
-            onClick={selectFloor}
-            draggable={false}
-            className="block h-auto max-h-[65vh] max-w-full cursor-crosshair"
-          />
+        {view.camera && (
+          <div className="relative max-h-[65vh] max-w-full">
+            <video
+              ref={video}
+              autoPlay
+              playsInline
+              muted
+              aria-label="Live robot camera; click clear floor to choose a destination"
+              onClick={selectFloor}
+              className={`block max-h-[65vh] max-w-full ${drive.canClick ? 'cursor-crosshair' : 'cursor-not-allowed'}`}
+            />
+            {marker && (
+              <span
+                aria-label="Selected destination"
+                className="pointer-events-none absolute size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-red-600 shadow"
+                style={{ left: `${marker.u * 100}%`, top: `${marker.v * 100}%` }}
+              />
+            )}
+          </div>
         )}
-        {!view.camera && !drive.capture && (
+        {!view.camera && (
           <div className="flex items-center gap-3 p-16 text-white/70">
             <Video size={22} />
             Waiting for the robot camera
@@ -256,31 +267,27 @@ export function LiveDrivePage() {
       </div>
       <div className="my-5 flex flex-wrap items-center gap-3">
         <button
-          className="flex items-center gap-2 rounded-lg bg-ink px-5 py-3 text-white disabled:opacity-40"
-          disabled={!view.camera || !drive.canCapture || drive.busy}
-          onClick={() => perform(() => client.current?.chooseDestination())}
-        >
-          <Crosshair size={20} />
-          Choose destination
-        </button>
-        <button
           className="flex items-center gap-2 rounded-lg bg-red-700 px-5 py-3 font-semibold text-white disabled:opacity-40"
           disabled={!drive.available}
-          onClick={() => perform(() => client.current?.stop())}
+          onClick={() => perform(() => {
+              client.current?.stop()
+              setMarker(undefined)
+            })}
         >
           <CircleStop size={20} />
-          Stop
+          {drive.previewOnly ? 'Cancel preview' : 'Stop'}
         </button>
         <p role="status" className="text-sm text-ink-2">
           {drive.status}
         </p>
       </div>
       <p className="text-sm text-ink-2">
-        Choose a destination view, then click clear floor nearby. The robot checks the location before moving.
-        You can stop it at any time while connected.
+        {drive.previewOnly
+          ? 'Click clear floor directly in the live camera. This session validates the point but cannot move the robot.'
+          : 'Click clear floor directly in the live camera. The robot checks fresh aligned depth before moving. You can stop it at any time while connected.'}
       </p>
       <p className="mt-2 text-xs text-ink-2">
-        Live video uses the head camera. Destination selection uses a fresh depth-aligned stereo image.
+        Live video and destination selection use the same rectified left camera. A click is rejected if localization, depth, map clearance, or the stationary check is not ready.
       </p>
     </PageShell>
   )

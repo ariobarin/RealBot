@@ -60,3 +60,12 @@ def test_private_files_are_never_overwritten(tmp_path):
     assert json.loads((target / "robot.session.json").read_text()) == robot
     assert json.loads((target / "browser.session.json").read_text()) == browser
     with pytest.raises(FileExistsError): write_configs(target, robot, browser)
+
+
+def test_preview_tokens_allow_click_data_but_require_distinct_robot_mode():
+    robot, browser = pair(preview=True)
+    assert robot["mode"] == browser["mode"] == "preview"
+    assert DemoConfig.parse(robot).mode == "preview"
+    assert decode(browser["token"])["video"]["canPublishData"] is True
+    assert decode(browser["token"])["video"]["canPublish"] is False
+    with pytest.raises(ValueError): pair(preview=True, driving=True)

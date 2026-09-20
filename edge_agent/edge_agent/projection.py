@@ -1,7 +1,8 @@
-"""Rectified capture -> floor goal. No IPC or hardware writes.
+"""Rectified live-video click -> floor goal. No IPC or hardware writes.
 
-The captured selection image is used instead of guessing which streamed video
-frame a visitor saw. Depth remains at its calibrated native resolution.
+The stream and fresh robot-side capture use the same rectified pixel geometry.
+Clicks are accepted only while the robot is stationary; depth remains local at
+its calibrated native resolution and is never inferred from a compressed frame.
 """
 from __future__ import annotations
 

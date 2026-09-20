@@ -14,12 +14,12 @@
 
 ## User experience
 
-An authorized visitor opens the robot session and sees its real head-camera
-feed. With the robot stationary and localization healthy, the visitor selects
-**Choose destination**, then clicks clear floor in a fresh captured image.
-This selection image is the rectified stereo-left image associated with depth,
-not an arbitrary delayed frame from the head-camera stream. The robot validates
-the target, drives there through bbOS navigation, and reports arrival or failure. Stop
+An authorized visitor opens the robot session and sees the rectified stereo-left
+camera feed. With the robot stationary and localization healthy, the visitor
+clicks clear floor directly in the live video. The robot takes a fresh aligned
+rectified image, depth, and pose at receipt and applies the normalized click to
+that same pixel grid. It validates the target, drives there through bbOS
+navigation, and reports arrival or failure. Stop
 remains available during navigation. Start with one destination at a time; a new
 destination requires the previous route to finish or be stopped.
 
@@ -30,7 +30,7 @@ explains why it cannot be used, without substituting invented coordinates.
 
 | Component | Current status | Remaining work |
 | --- | --- | --- |
-| Visitor camera-click UI | `LiveDrivePage` and `LiveDriveClient`: LiveKit head video, captured-image selection, normalized clicks, Stop and authoritative results | Authorized session/token backend and real media test |
+| Visitor camera-click UI | `LiveDrivePage` and `LiveDriveClient`: LiveKit rectified video, direct normalized clicks, marker, Stop and authoritative results | Authorized session/token backend and physical motion test |
 | LiveKit viewer | Shared receiver, realtor read-only viewer, telemetry publisher | Install hooks in the existing robot participant; no second participant |
 | Navigation | `BbosNavigationAdapter` writes `nav.command`, requires fresh route state and awaits arrival | Dedicated driving mode must release/skip legacy teleop writers; hardware verification |
 | Click geometry | `BbosFloorView` reads aligned rect/depth/pose; `floor_goal` projects and checks fresh map, stationary pose, floor, range and clearance | Validate installed calibration, coordinate frames, timestamps and grid against measured physical targets with motion disabled |
@@ -151,20 +151,23 @@ map reset/export-import maintenance concurrently with visitor driving.
 - Controller → robot: reliable, destination-scoped `realbot.drive_command` JSON.
   Heartbeats contain `type=heartbeat`, `sessionId`, increasing integer `sequence`,
   and `expiresAt`. Commands contain `type=command`, unique `commandId`, `sessionId`,
-  `expiresAt` and `action=capture|move|stop`. Move additionally includes
-  `captureId,u,v`. No arbitrary map coordinates or velocity commands are accepted.
+  `expiresAt` and `action=move_to_view|stop`. `move_to_view` includes normalized
+  `u,v` and `coordinateSpace=normalized_camera`; the robot
+  chooses the fresh aligned depth/pose sample and never accepts browser-supplied
+  map coordinates or velocity commands. Legacy capture/move messages remain only
+  for compatibility with earlier development clients.
 - Robot → controller: destination-scoped `realbot.driving` JSON with `version=1`,
-  random `sessionId`, robot Unix `at`, and `type=state|capture|result`. State at
-  5 Hz reports `ready,lease,busy,fault,canCapture`; capture includes `commandId`,
-  `captureId`, base64 JPEG and `validForMs`; results include `commandId,status,detail`.
+  random `sessionId`, robot Unix `at`, and `type=state|result`. State at 5 Hz
+  reports `ready,lease,busy,fault,canClick,previewOnly`; results include
+  `commandId,status,detail`.
 - Browser estimates robot time from each state, so synchronized wall clocks are
   unnecessary. Robot accepts command deadlines at most 5 s ahead; browser sends
   3 s commands and resends the same ID while awaiting acknowledgement. Controller
   heartbeat expires after 3 s, checked every 200 ms. Publish failure tears down
   control. These are software bounds, not verified motor stopping distances.
-- Selection JPEG stays below 9 KB (typically 320×240), carried inside a packet
-  below 15 KB. Native depth remains on robot. Capture expires after 10 s, is
-  consumed once, and is cleared on Stop or readiness/lease loss. Goals must be
+- Video travels as a LiveKit track; native depth never leaves the robot. A click
+  is accepted only while the robot is stationary and ready, and triggers a fresh
+  aligned rect/depth/pose capture. Goals must be
   within 0.25–2 m, within 12 cm of mapped floor height, on known floor with at
   least the configured nav footprint clearance. Current pose must match capture
   within 3 cm and 2°. These conservative initial thresholds require calibration
@@ -177,8 +180,9 @@ map reset/export-import maintenance concurrently with visitor driving.
 - Obtain an authorized visitor session through the application backend; retain
   accountless invitation access where applicable, with server-side room access
   checks. A room ID alone does not authorize hardware control.
-- Reuse the existing bbOS LiveKit participant and `cam-wrist` publication,
-  which is the head-camera feed in the audited implementation.
+- Reuse the existing bbOS LiveKit publication name `cam-wrist`, but publish the
+  rectified left camera so displayed pixels share the depth image's coordinate
+  system.
 - Share the existing receive logic with the user-facing route. Show connection,
   camera availability, and localization readiness independently.
 - Prove the camera works across separate robot/browser networks before enabling
@@ -201,11 +205,11 @@ map reset/export-import maintenance concurrently with visitor driving.
 
 - Use a stationary robot for the first version. Permit clicks only with a fresh
   camera view, healthy localization, and no active route.
-- Associate the clicked image with a retained aligned RGB/depth/pose capture and
-  calibration/map revision. Sending only `u/v` against whichever depth frame is
-  newest is insufficient. LiveKit video and data packets must not be assumed to
-  arrive together; verify a frame association mechanism or use an explicit
-  fresh captured-image selection step backed by a capture ID.
+- Stream the same rectified left image geometry used by `camera.depth`. On click,
+  require the robot to be stationary, capture fresh aligned rect/depth/pose data,
+  and apply `u/v` to that pixel grid. LiveKit frame timing is not treated as depth
+  timing; the fresh robot-side sample is authoritative. Reject the click if the
+  pose changes, source data is stale, or map/calibration revision changes.
 - Account for the actual video image rectangle, letterboxing/cropping, resolution,
   and raw-versus-rectified camera calibration when mapping the click to a ray.
 - Resolve the ray with aligned depth, transform into the map frame, and require
@@ -232,7 +236,7 @@ gate this MVP and must not be exposed as working physical controls.
 ## Acceptance gate
 
 From the user-facing app on a different network, an authorized operator sees
-real head video, clicks a visible floor target, and observes the robot arrive
+real rectified video, clicks a visible floor target, and observes the robot arrive
 with a matching result in the app. Stop interrupts motion; expired/duplicate
 commands do not cause additional motion; invalid/stale clicks do not move it;
 localization loss or controller disconnect stops the route; reconnect shows

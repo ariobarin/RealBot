@@ -5,7 +5,9 @@ import type { ViewerSession } from './liveTelemetry'
 export interface DriveView {
   available: boolean
   canCapture: boolean
+  canClick: boolean
   busy: boolean
+  previewOnly?: boolean
   capture?: { id: string; image: string; expires: number }
   status: string
 }
@@ -13,6 +15,7 @@ export interface DriveView {
 const initial = (): DriveView => ({
   available: false,
   canCapture: false,
+  canClick: false,
   busy: false,
   status: 'Waiting for robot control',
 })
@@ -74,7 +77,7 @@ export class LiveDriveClient extends LiveTelemetryClient {
     if (this.pulse) clearInterval(this.pulse)
     this.pulse = setInterval(() => {
       if (performance.now() - this.receivedTime > 2_000) {
-        this.setDrive({ available: false, canCapture: false, capture: undefined })
+        this.setDrive({ available: false, canCapture: false, canClick: false, capture: undefined })
         return
       }
       void this.heartbeat()
@@ -108,7 +111,7 @@ export class LiveDriveClient extends LiveTelemetryClient {
         expiresAt: this.robotNow() + 2_000,
       })
     } catch {
-      this.setDrive({ available: false, canCapture: false, status: 'Control connection interrupted.' })
+      this.setDrive({ available: false, canCapture: false, canClick: false, status: 'Control connection interrupted.' })
     }
   }
 
@@ -152,7 +155,9 @@ export class LiveDriveClient extends LiveTelemetryClient {
         this.setDrive({
           available: true,
           canCapture: m.canCapture && !this.pending,
+          canClick: (typeof m.canClick === 'boolean' ? m.canClick : m.canCapture) && !this.pending,
           busy: m.busy,
+          previewOnly: m.previewOnly === true,
           ...(!m.ready || !m.lease ? { capture: undefined } : {}),
           ...(readiness
             ? { status: readiness }
@@ -164,7 +169,7 @@ export class LiveDriveClient extends LiveTelemetryClient {
                   'Camera available; navigation is waiting for localization and sensors.',
                   'Control connection interrupted.',
                 ].includes(this.drive.status)
-              ? { status: 'Ready. Choose a destination view.' }
+              ? { status: 'Ready. Click clear floor in the live camera.' }
               : {}),
         })
         void this.heartbeat()
@@ -210,7 +215,7 @@ export class LiveDriveClient extends LiveTelemetryClient {
     }
   }
 
-  private command(action: 'capture' | 'move' | 'stop', payload: Record<string, unknown> = {}) {
+  private command(action: 'move_to_view' | 'capture' | 'move' | 'preview' | 'stop', payload: Record<string, unknown> = {}) {
     if (!this.sessionId || !this.drive.available) throw new Error('Robot control is not connected.')
     this.clearRetries()
     const commandId = crypto.randomUUID()
@@ -225,18 +230,21 @@ export class LiveDriveClient extends LiveTelemetryClient {
     this.pending = { id: commandId, action }
     this.setDrive({
       canCapture: false,
+      canClick: false,
       capture: undefined,
       status:
         action === 'stop'
           ? 'Stopping…'
           : action === 'capture'
             ? 'Preparing destination view…'
+            : action === 'move_to_view'
+              ? 'Checking the floor at your click…'
             : 'Checking destination…',
     })
     const send = () => {
       if (this.pending?.id !== commandId) return
       void this.publish(message).catch(() =>
-        this.setDrive({ canCapture: false, status: 'Command delivery failed. Stop or reconnect.' }),
+        this.setDrive({ canCapture: false, canClick: false, status: 'Command delivery failed. Stop or reconnect.' }),
       )
     }
     send()
@@ -251,13 +259,21 @@ export class LiveDriveClient extends LiveTelemetryClient {
     this.command('capture')
   }
 
+  clickDestination(u: number, v: number) {
+    if (!this.drive.canClick || this.drive.busy || this.pending)
+      throw new Error('Wait until the robot is stationary and ready.')
+    if (![u, v].every((n) => Number.isFinite(n) && n >= 0 && n <= 1))
+      throw new Error('Click inside the live camera image.')
+    this.command('move_to_view', { u, v, coordinateSpace: 'normalized_camera' })
+  }
+
   move(u: number, v: number) {
     const capture = this.drive.capture
     if (!capture || performance.now() >= capture.expires || this.drive.busy || this.pending)
       throw new Error('Choose a fresh view when the robot is stopped.')
     if (![u, v].every((n) => Number.isFinite(n) && n >= 0 && n <= 1))
       throw new Error('Click inside the camera image.')
-    this.command('move', { captureId: capture.id, u, v })
+    this.command(this.drive.previewOnly ? 'preview' : 'move', { captureId: capture.id, u, v })
   }
 
   stop() {

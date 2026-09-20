@@ -12,7 +12,8 @@ launched against moving hardware.
 
 For the current one-user MVP, see
 [`../docs/SINGLE_USER_DEMO.md`](../docs/SINGLE_USER_DEMO.md): offline token
-generation, camera-only startup, and explicit opt-in click-to-drive using the
+generation, camera-only startup, no-motion click preview, and explicit opt-in
+click-to-drive using the
 installed bbOS LiveKit publisher. No hosted session backend is needed for that
 development flow; robot deployment and physical acceptance remain pending.
 

@@ -47,7 +47,7 @@ class DemoConfig:
             if not isinstance(data.get(key), str) or not data[key].strip():
                 raise ValueError(f"Missing session field: {key}")
         validate_url(data["url"])
-        if data.get("mode") not in {"camera", "drive"} or data["robotIdentity"] == data["controllerIdentity"]:
+        if data.get("mode") not in {"camera", "drive", "preview"} or data["robotIdentity"] == data["controllerIdentity"]:
             raise ValueError("Invalid mode or participant identities")
         expires = data.get("expiresAt")
         if type(expires) is not int or not time.time() < expires <= time.time() + 3600:
@@ -138,11 +138,37 @@ def head_frames(frames: queue.Queue, stop: threading.Event, *, push, reader_fact
         reader.__exit__(None, None, None)
 
 
+def rectified_frames(frames: queue.Queue, stop: threading.Event, *, push, reader_factory=None):
+    """Publish the same rectified left view whose pixels align with camera.depth."""
+    if reader_factory is None:
+        from bbos import Reader
+        reader_factory = Reader
+    reader = reader_factory("camera.rect", keeptime=False).__enter__()
+    last_frame, last_timestamp = time.monotonic(), -1
+    try:
+        while not stop.is_set():
+            if reader.ready() and reader.readable and reader.data is not None:
+                data = reader.data
+                value = data["timestamp"]
+                timestamp = int(value.astype("int64")) if hasattr(value, "astype") else int(value)
+                image = data["left"]
+                if (timestamp > last_timestamp and 0 <= time.time_ns()-timestamp <= 500_000_000
+                        and getattr(image, "ndim", 0) == 3 and image.shape[2] == 3):
+                    push(frames, image.copy())
+                    last_frame, last_timestamp = time.monotonic(), timestamp
+            if time.monotonic() - last_frame > 3:
+                raise RuntimeError("Depth-aligned camera is absent or stale; ending session")
+            stop.wait(.01)
+    finally:
+        reader.__exit__(None, None, None)
+
+
 async def serve(config: DemoConfig, room, *, options, camera, telemetry, driving,
-                guard, shutdown: asyncio.Event, enable_driving: bool):
+                guard, shutdown: asyncio.Event, enable_driving: bool, preview_only: bool = False):
     """Testable lifecycle: all task cleanup completes before room disconnect."""
-    if (config.mode == "drive") != enable_driving:
-        raise ValueError("Driving requires both a drive credential file and --enable-driving")
+    expected_mode = "preview" if preview_only else "drive" if enable_driving else "camera"
+    if (preview_only and enable_driving) or config.mode != expected_mode:
+        raise ValueError("Session mode must match the explicit camera, preview, or driving launch mode")
     guard()
     ending = asyncio.Event()
     def disconnected(*_): ending.set()
@@ -171,9 +197,10 @@ async def serve(config: DemoConfig, room, *, options, camera, telemetry, driving
         guard()
         tasks = [asyncio.create_task(camera(room)), asyncio.create_task(telemetry(room)),
                  asyncio.create_task(monitor())]
-        if enable_driving:
+        if enable_driving or preview_only:
+            options = {"preview_only": True} if preview_only else {}
             tasks.append(asyncio.create_task(driving(room, controller_identity=config.controller,
-                                                     legacy_teleop_disabled=True)))
+                                                     legacy_teleop_disabled=True, **options)))
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
@@ -191,7 +218,7 @@ async def serve(config: DemoConfig, room, *, options, camera, telemetry, driving
 async def camera_task(room, media):
     frames = queue.Queue(maxsize=1)
     stop = threading.Event()
-    reader = asyncio.create_task(asyncio.to_thread(head_frames, frames, stop, push=media.push_queue))
+    reader = asyncio.create_task(asyncio.to_thread(rectified_frames, frames, stop, push=media.push_queue))
     publisher = asyncio.create_task(media.publish_feed(room, frames, "cam-wrist"))
     try:
         done, _ = await asyncio.wait([reader, publisher], return_when=asyncio.FIRST_COMPLETED)
@@ -204,7 +231,7 @@ async def camera_task(room, media):
         await asyncio.wait_for(asyncio.shield(reader), 5)
 
 
-async def run(config, enable_driving):
+async def run(config, enable_driving, preview_only=False):
     from livekit import rtc
     # Import only transport helpers, NOT daemon.py or its actuator-owning thread.
     from bbos.daemons.remote_session import session as media
@@ -222,7 +249,7 @@ async def run(config, enable_driving):
             await serve(config, rtc.Room(), options=rtc.RoomOptions(auto_subscribe=False),
                         camera=lambda room: camera_task(room, media), telemetry=publish_telemetry,
                         driving=run_driving, guard=lambda: legacy_guard(daemon_dir),
-                        shutdown=shutdown, enable_driving=enable_driving)
+                        shutdown=shutdown, enable_driving=enable_driving, preview_only=preview_only)
     finally:
         for sig in signals:
             loop.remove_signal_handler(sig)
@@ -231,15 +258,22 @@ async def run(config, enable_driving):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="Private robot.session.json")
-    parser.add_argument("--enable-driving", action="store_true", help="Requires supervised motion clearance")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--enable-driving", action="store_true", help="Requires supervised motion clearance")
+    mode.add_argument("--preview-only", action="store_true", help="Validate floor clicks without a navigation adapter")
     parser.add_argument("--check", action="store_true", help="Check imports and legacy-daemon guard; no connection or writers")
     args = parser.parse_args()
     try:
         if args.check:
             from bbos.daemons.remote_session import session as media
-            if args.enable_driving:
+            if args.enable_driving or args.preview_only:
                 from .adapters.bbos_view import BbosFloorView  # dependencies only; no readers opened
                 import yaml
+                import ctypes
+                from bbos import Config
+                # Import checks alone miss native dependencies such as TensorRT.
+                # Loading the calibration library opens no sensor or actuator IPC.
+                ctypes.CDLL(str(Config("mapping").library)).map_calib
             legacy_guard(Path(media.__file__).parent)
             print("Requested runtime dependencies import successfully; legacy daemon is stopped.")
             print("No LiveKit room joined. No sensor readers, hardware writers, or services started.")
@@ -247,7 +281,7 @@ def main():
         if args.config is None:
             parser.error("--config is required unless using --check")
         config = DemoConfig.load(args.config)
-        asyncio.run(run(config, args.enable_driving))
+        asyncio.run(run(config, args.enable_driving, args.preview_only))
     except KeyboardInterrupt:
         pass
     except Exception:

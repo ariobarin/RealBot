@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from edge_agent.demo_session import DemoConfig, serve, legacy_guard, head_frames
+from edge_agent.demo_session import DemoConfig, serve, legacy_guard, head_frames, rectified_frames
 
 
 class Room:
@@ -86,7 +86,7 @@ def test_camera_only_never_installs_driving_and_expiry_ends_session():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("mode,enabled", [("camera", True), ("drive", False)])
+@pytest.mark.parametrize("mode,enabled", [("camera", True), ("drive", False), ("preview", False), ("preview", True)])
 def test_driving_needs_config_and_operator_opt_in(mode, enabled):
     async def scenario():
         room = Room()
@@ -94,6 +94,25 @@ def test_driving_needs_config_and_operator_opt_in(mode, enabled):
             await serve(config(mode), room, options=None, camera=None, telemetry=None, driving=None,
                         guard=lambda: None, shutdown=asyncio.Event(), enable_driving=enabled)
         assert not room.events
+    asyncio.run(scenario())
+
+
+def test_preview_requires_matching_config_and_passes_preview_flag():
+    async def scenario():
+        room, shutdown = Room(), asyncio.Event()
+        async def waiting(room): await asyncio.Event().wait()
+        async def preview(room, **kwargs):
+            assert kwargs == dict(controller_identity="controller", legacy_teleop_disabled=True, preview_only=True)
+            shutdown.set()
+        await serve(config("preview"), room, options=None, camera=waiting, telemetry=waiting,
+                    driving=preview, guard=lambda: None, shutdown=shutdown,
+                    enable_driving=False, preview_only=True)
+        assert room.events == ["connect", "disconnect"]
+        for mode in ("camera", "drive"):
+            with pytest.raises(ValueError):
+                await serve(config(mode), Room(), options=None, camera=None, telemetry=None,
+                            driving=None, guard=lambda: None, shutdown=shutdown,
+                            enable_driving=False, preview_only=True)
     asyncio.run(scenario())
 
 
@@ -140,6 +159,24 @@ def test_robot_launcher_uses_cached_libraries_without_importing_cached_secrets(t
     assert "UNRELATED_CACHED_SECRET" not in env
     assert str(tmp_path) in env["PYTHONPATH"]
 
+    # Camera-only works without mapping; driving fails closed if its cache is absent.
+    with pytest.raises(OSError):
+        launcher.runtime(tmp_path, driving=True)
+    mapping = tmp_path / "bbos/daemons/mapping/.devenv"
+    mapping.mkdir(parents=True)
+    (mapping / "bbos-env.json").write_text(json.dumps({
+        "LD_LIBRARY_PATH": "/mapping-libs", "PATH": "/do-not-use",
+        "UNRELATED_MAPPING_SECRET": "do-not-copy",
+    }))
+    _, driving_env = launcher.runtime(tmp_path, driving=True)
+    import os
+    assert driving_env["LD_LIBRARY_PATH"] == os.pathsep.join(("/private-libs", "/mapping-libs"))
+    assert driving_env.get("PATH") != "/do-not-use"
+    assert "UNRELATED_MAPPING_SECRET" not in driving_env
+    (mapping / "bbos-env.json").write_text('{"LD_LIBRARY_PATH": ""}')
+    with pytest.raises(ValueError):
+        launcher.runtime(tmp_path, driving=True)
+
 
 def test_head_reader_splits_real_topic_without_opening_hardware_writers():
     stop, frames = threading.Event(), queue.Queue(maxsize=1)
@@ -161,6 +198,26 @@ def test_head_reader_splits_real_topic_without_opening_hardware_writers():
     camera = SimpleNamespace(width=4, height=2, split=lambda img: (img[:,:2], img[:,2:]))
     head_frames(frames, stop, push=push, reader_factory=factory, config=camera, cv=cv)
     assert np.array_equal(frames.get_nowait(), rgb[:,:2])
+    assert reader.closed
+
+
+def test_live_navigation_camera_uses_depth_aligned_rectified_left_topic():
+    stop, frames = threading.Event(), queue.Queue(maxsize=1)
+    image = np.arange(36, dtype=np.uint8).reshape(3, 4, 3)
+    class Reader:
+        readable = True
+        data = {"timestamp": time.time_ns(), "left": image}
+        closed = False
+        def __enter__(self): return self
+        def __exit__(self, *args): self.closed = True
+        def ready(self): return True
+    reader = Reader()
+    def factory(topic, **kwargs):
+        assert topic == "camera.rect" and kwargs == {"keeptime": False}
+        return reader
+    def push(q, frame): q.put_nowait(frame); stop.set()
+    rectified_frames(frames, stop, push=push, reader_factory=factory)
+    assert np.array_equal(frames.get_nowait(), image)
     assert reader.closed
 
 

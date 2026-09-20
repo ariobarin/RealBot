@@ -19,12 +19,13 @@ COMMAND_TOPIC = "realbot.drive_command"
 
 
 class DrivingSession:
-    def __init__(self, *, controller_identity, source, navigation, publish):
+    def __init__(self, *, controller_identity, source, navigation, publish, preview_only=False):
         if not controller_identity:
             raise ValueError("A trusted controller identity is required")
         self.controller = controller_identity
         self.source = source
-        self.motion = MotionCoordinator({MotionMode.NAVIGATING: navigation})
+        self.preview_only = preview_only
+        self.motion = MotionCoordinator({} if preview_only else {MotionMode.NAVIGATING: navigation})
         self.publish = publish
         self.session_id = uuid.uuid4().hex
         self.capture = None
@@ -85,7 +86,7 @@ class DrivingSession:
                 return
             command_id = message.get("commandId")
             action = message.get("action")
-            if not isinstance(command_id, str) or not 1 <= len(command_id) <= 128 or action not in {"capture", "move", "stop"}:
+            if not isinstance(command_id, str) or not 1 <= len(command_id) <= 128 or action not in {"move_to_view", "capture", "move", "preview", "stop"}:
                 return
             # Bound response work as well as physical operations under packet floods.
             if len(self._background) >= 8 and action != "stop":
@@ -111,9 +112,31 @@ class DrivingSession:
     async def _execute(self, command_id, action, message):
         try:
             await self.status(command_id, "accepted")
+            if action == "move" and self.preview_only:
+                raise ValueError("Preview-only session: movement is disabled.")
+            if action == "preview" and not self.preview_only:
+                raise ValueError("Preview requires a preview-only session.")
             if not self.source.ready() or not self.lease_active:
                 raise ValueError("Robot localization, sensors, or controller are unavailable.")
-            if action == "capture":
+            if action == "move_to_view":
+                if message.get("coordinateSpace") != "normalized_camera":
+                    raise ValueError("Unsupported camera coordinate space.")
+                capture = await self.source.capture()
+                if not self.lease_active or not self.source.ready():
+                    raise ValueError("Click interrupted. Wait for the robot to become ready and try again.")
+                target = self.source.resolve(capture, message.get("u"), message.get("v"))
+                if not self.lease_active:
+                    raise ValueError("Controller heartbeat expired.")
+                if self.preview_only:
+                    await self.status(command_id, "succeeded",
+                                      f"Preview accepted: map x={target['x']:.2f} m, y={target['y']:.2f} m. No movement sent.")
+                    return
+                await self.motion.transition(MotionMode.NAVIGATING, command_id, target)
+                await self.status(command_id, "moving")
+                await self.motion.wait_for_completion(MotionMode.NAVIGATING, command_id)
+                await self.motion.complete(MotionMode.NAVIGATING, command_id, "arrived")
+                await self.status(command_id, "succeeded", "Arrived.")
+            elif action == "capture":
                 self.capture = None
                 capture = await self.source.capture()
                 if not self.lease_active or not self.source.ready():
@@ -131,6 +154,10 @@ class DrivingSession:
                 target = self.source.resolve(capture, message.get("u"), message.get("v"))
                 if not self.lease_active:
                     raise ValueError("Controller heartbeat expired.")
+                if self.preview_only:
+                    await self.status(command_id, "succeeded",
+                                      f"Preview accepted: map x={target['x']:.2f} m, y={target['y']:.2f} m. No movement sent.")
+                    return
                 await self.motion.transition(MotionMode.NAVIGATING, command_id, target)
                 await self.status(command_id, "moving")
                 await self.motion.wait_for_completion(MotionMode.NAVIGATING, command_id)
@@ -178,7 +205,9 @@ class DrivingSession:
                 if (not self.lease_active or not ready) and (self.busy or self.capture is not None):
                     await self.stop("controller_or_localization_lost")
                 await self.send({"type": "state", "ready": ready, "lease": self.lease_active,
+                                 "previewOnly": self.preview_only,
                                  "busy": self.busy, "fault": self.motion.fault,
+                                 "canClick": ready and self.lease_active and not self.busy and self.motion.mode == MotionMode.IDLE,
                                  "canCapture": ready and self.lease_active and not self.busy and self.motion.mode == MotionMode.IDLE})
                 await asyncio.sleep(.2)
         finally:
@@ -193,7 +222,7 @@ class DrivingSession:
         await asyncio.gather(*list(self._background), return_exceptions=True)
 
 
-async def run_driving(room, *, controller_identity: str, legacy_teleop_disabled: bool):
+async def run_driving(room, *, controller_identity: str, legacy_teleop_disabled: bool, preview_only: bool = False):
     """Host hook; controller identity comes from trusted server/operator config.
 
     Call only in a dedicated driving session whose bbos_thread does not acquire
@@ -202,8 +231,11 @@ async def run_driving(room, *, controller_identity: str, legacy_teleop_disabled:
     """
     if not legacy_teleop_disabled:
         raise RuntimeError("Release legacy teleop ownership before enabling visitor driving")
-    from .adapters.bbos_navigation import BbosNavigationAdapter
     from .adapters.bbos_view import BbosFloorView
+    navigation = None
+    if not preview_only:
+        from .adapters.bbos_navigation import BbosNavigationAdapter
+        navigation = BbosNavigationAdapter()
 
     async def publish(message):
         payload = json.dumps(message, allow_nan=False, separators=(",", ":")).encode()
@@ -214,7 +246,7 @@ async def run_driving(room, *, controller_identity: str, legacy_teleop_disabled:
 
     with BbosFloorView() as source:
         session = DrivingSession(controller_identity=controller_identity, source=source,
-                                 navigation=BbosNavigationAdapter(), publish=publish)
+                                 navigation=navigation, publish=publish, preview_only=preview_only)
         def on_data(packet):
             if packet.topic == COMMAND_TOPIC and packet.participant is not None:
                 session.receive(packet.participant.identity, packet.data)

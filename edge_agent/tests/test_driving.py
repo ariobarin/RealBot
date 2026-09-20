@@ -68,6 +68,64 @@ def test_capture_move_duplicate_and_arrival():
     asyncio.run(scenario())
 
 
+def test_preview_resolves_direct_live_click_but_never_calls_navigation_even_on_stop():
+    async def scenario():
+        packets = []
+        async def publish(packet): packets.append(packet)
+        class ForbiddenNavigation:
+            async def start(self, *args): raise AssertionError("No motion in preview")
+            async def stop(self, *args): raise AssertionError("No hardware stop in preview")
+        s = DrivingSession(controller_identity="operator", source=Source(),
+                           navigation=ForbiddenNavigation(), publish=publish, preview_only=True)
+        send(s, "", type="heartbeat", sequence=1)
+        send(s, "move", id="forbidden", captureId="capture-1", u=.5, v=.5)
+        await s.task
+        assert s.results["forbidden"]["status"] == "failed"
+        assert "movement is disabled" in s.results["forbidden"]["detail"]
+        send(s, "move_to_view", id="preview", u=.5, v=.5, coordinateSpace="normalized_camera")
+        await s.task
+        assert s.results["preview"]["status"] == "succeeded"
+        assert "x=1.00" in s.results["preview"]["detail"]
+        assert "No movement sent" in s.results["preview"]["detail"]
+        assert s.capture is None
+        send(s, "stop", id="cancel")
+        await s.stop_task
+        await s.close()
+        assert not any(p.get("status") == "moving" for p in packets)
+    asyncio.run(scenario())
+
+
+def test_direct_live_click_captures_fresh_depth_then_starts_one_route():
+    async def scenario():
+        s, _, nav, packets = setup()
+        send(s, "", type="heartbeat", sequence=1)
+        send(s, "move_to_view", u=.25, v=.75, coordinateSpace="normalized_camera")
+        await nav.started.wait()
+        for _ in range(10):
+            if any(p.get("status") == "moving" for p in packets): break
+            await asyncio.sleep(0)
+        assert nav.starts == 1
+        assert any(p.get("status") == "moving" for p in packets)
+        nav.finish.set()
+        await asyncio.wait_for(s.task, 1)
+        assert s.results["command"]["status"] == "succeeded"
+        await s.close()
+    asyncio.run(scenario())
+
+
+def test_direct_live_click_rejects_unknown_coordinate_space_without_motion():
+    async def scenario():
+        s, _, nav, _ = setup()
+        send(s, "", type="heartbeat", sequence=1)
+        send(s, "move_to_view", u=.25, v=.75, coordinateSpace="map")
+        await s.task
+        assert s.results["command"]["status"] == "failed"
+        assert "coordinate space" in s.results["command"]["detail"]
+        assert nav.starts == 0
+        await s.close()
+    asyncio.run(scenario())
+
+
 def test_stop_interrupts_route_and_new_route_requires_capture():
     async def scenario():
         s, _, nav, _ = setup()

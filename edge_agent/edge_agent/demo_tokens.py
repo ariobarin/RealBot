@@ -21,10 +21,12 @@ def validate_url(url: str) -> str:
 
 
 def generate(*, url: str, api_key: str, api_secret: str, minutes: int = 30,
-             driving: bool = False):
+             driving: bool = False, preview: bool = False):
     from livekit import api
 
     validate_url(url)
+    if driving and preview:
+        raise ValueError("Choose either driving or preview, not both.")
     if not api_key or not api_secret:
         raise ValueError("Set LIVEKIT_API_KEY and LIVEKIT_API_SECRET privately.")
     if type(minutes) is not int or not 1 <= minutes <= 60:
@@ -48,11 +50,11 @@ def generate(*, url: str, api_key: str, api_secret: str, minutes: int = 30,
 
     robot_config = dict(version=1, kind="robot", url=url, roomId=room, robotIdentity=robot,
                         controllerIdentity=controller, expiresAt=expires,
-                        mode="drive" if driving else "camera",
+                        mode="preview" if preview else "drive" if driving else "camera",
                         token=token(robot, camera=True, commands=True))
     browser_config = dict(version=1, kind="browser", url=url, roomId=room, robotIdentity=robot,
                           expiresAt=expires, mode=robot_config["mode"],
-                          token=token(controller, camera=False, commands=driving))
+                          token=token(controller, camera=False, commands=driving or preview))
     return robot_config, browser_config
 
 
@@ -71,7 +73,9 @@ def main():
     parser.add_argument("--env-file", type=Path, help="Private local .env; never a VITE_ file")
     parser.add_argument("--output", type=Path, required=True, help="New private output directory")
     parser.add_argument("--minutes", type=int, default=30)
-    parser.add_argument("--enable-driving", action="store_true", help="Issue controller data permission; default is camera-only")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--enable-driving", action="store_true", help="Issue controller data permission; default is camera-only")
+    mode.add_argument("--preview-only", action="store_true", help="Issue a no-movement floor-preview session")
     args = parser.parse_args()
     if args.env_file:
         from dotenv import load_dotenv
@@ -82,7 +86,7 @@ def main():
         robot, browser = generate(url=os.environ.get("LIVEKIT_URL", ""),
                                   api_key=os.environ.get("LIVEKIT_API_KEY", ""),
                                   api_secret=os.environ.get("LIVEKIT_API_SECRET", ""),
-                                  minutes=args.minutes, driving=args.enable_driving)
+                                  minutes=args.minutes, driving=args.enable_driving, preview=args.preview_only)
         write_configs(args.output, robot, browser)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
