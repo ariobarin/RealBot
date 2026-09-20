@@ -1,6 +1,7 @@
 """Allowlisted electrical-box action, scoped to the current visitor and robot 0188."""
 import asyncio
 import json
+import os
 from pathlib import Path
 import socket
 import time
@@ -158,6 +159,21 @@ class ScriptRelay:
         self.result = {}
         self.task = None
 
+    # The bridge runs inside a nix/devenv environment whose LD_LIBRARY_PATH points at a
+    # gcc-13 libstdc++ linked against GLIBC_2.38, which this Ubuntu does not provide. A
+    # script that inherits it cannot import torch, so the policy dies on startup while the
+    # same script works over SSH. Hand the scripts the plain login environment instead.
+    PATH = '/home/bracketbot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+    def environment(self):
+        keep = ('HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TZ')
+        env = {name: os.environ[name] for name in keep if name in os.environ}
+        env.setdefault('HOME', str(Path.home()))
+        env.setdefault('USER', 'bracketbot')
+        env['PATH'] = self.PATH
+        env['SHELL'] = '/bin/bash'
+        return env
+
     def validate(self, caller, payload):
         if caller != self.controller or len(payload) > 1024:
             raise ValueError('Unauthorized script command')
@@ -190,7 +206,7 @@ class ScriptRelay:
             with log.open('wb') as handle:
                 process = await asyncio.create_subprocess_exec(
                     str(self.root / SCRIPTS[name][0]), *SCRIPTS[name][1:], cwd=str(self.root),
-                    stdin=asyncio.subprocess.DEVNULL, stdout=handle,
+                    env=self.environment(), stdin=asyncio.subprocess.DEVNULL, stdout=handle,
                     stderr=asyncio.subprocess.STDOUT)
                 code = await asyncio.wait_for(process.wait(), 180)
         except asyncio.TimeoutError:
