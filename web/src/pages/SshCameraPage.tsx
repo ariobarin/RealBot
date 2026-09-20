@@ -3,9 +3,10 @@ import { Link, useParams } from 'react-router-dom'
 import { PageShell } from '../components/ui/PageShell'
 import { FreeCamButton } from '../components/control/FreeCamButton'
 import { RemoteFreeCam } from '../components/control/RemoteFreeCam'
+import { ActionLocations } from '../components/control/ActionLocations'
 import { startKeyboardDrive } from '../lib/keyboardDrive'
 import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
-import { VisitorLiveKit, type ActState, type FreeCamState } from '../lib/visitorLiveKit'
+import { VisitorLiveKit, type ActionView, type FreeCamState } from '../lib/visitorLiveKit'
 import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
 import { requestVisitorSession, visitorAccessCode } from '../lib/visitorSession'
@@ -30,18 +31,18 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const [view, setView] = useState<LiveView>({ connection: 'disconnected', robotOnline: false, telemetryFresh: false })
   const [map, setMap] = useState<MapSnapshot | null>(null)
   const [freeCam, setFreeCam] = useState<FreeCamState | null>(null)
-  const [act, setAct] = useState<ActState | null>(null)
-  const [actPending, setActPending] = useState(false)
-  const [actError, setActError] = useState('')
+  const [actions, setActions] = useState<ActionView | null>(null)
+  const [actionPending, setActionPending] = useState(false)
+  const [actionError, setActionError] = useState('')
   const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
-  const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setAct))
-  async function actCommand(action: 'run' | 'stop') {
-    setActPending(true)
-    setActError('')
-    try { await client.actCommand(action) }
-    catch { setActError('ACT command could not complete. Check the policy terminal.') }
-    finally { setActPending(false) }
+  const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
+  async function runPolicy() {
+    setActionPending(true)
+    setActionError('')
+    try { await client.startAction('policy:electric_box') }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not start ACT') }
+    finally { setActionPending(false) }
   }
   const changeView = useCallback((_viewing: boolean) => {
     setDriving(false)
@@ -91,8 +92,10 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
     <section aria-label={`Robot ${roomId}`} className="flex min-h-0 flex-1 flex-col">
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{roomId} · {viewingHand ? 'Right-hand Free Cam' : robotRole === 'act' ? 'Stationary ACT' : 'Driving / Free Cam'}</h1>
-          <p className="mt-1 text-sm text-ink-2">{robotRole === 'act' ? 'Electrical-box policy. Base driving is disabled.' : viewingHand ? 'Move the camera with coordinated arm control.' : 'Saved action locations appear in the camera view.'}</p>
+          <h1 className="text-2xl font-semibold">{roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
+          <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.'
+            : actions?.state.available ? 'Position at the box, then click its circle to open it. Stop when it opens.'
+              : 'Saved action locations appear in the camera view.'}</p>
         </div>
         {!embedded && !setup && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
         {!embedded && <Link to={setup ? '/realtor' : '/'} className="text-sm underline underline-offset-4">{setup ? 'Your spaces' : 'Leave tour'}</Link>}
@@ -133,6 +136,9 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
               onError={() => { setFailed(true); setDriving(false) }}
               className="w-[200%] max-w-none"
             />}
+            {livekit && <ActionLocations client={client} view={actions}
+              disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera}
+              onStart={() => { setDriving(false); setDriveStatus('Drive stopped for arm action') }} />}
             {livekit && !view.camera && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-white">
               <p>{view.error || 'Connecting camera…'}</p>
               {view.error && <button className="rounded-lg border px-4 py-2" onClick={() => {
@@ -145,22 +151,21 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
           </div>
         </div>
       )}
-      {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 flex-wrap items-center gap-3">
-        <p role="status" className="w-full text-sm text-ink-2">ACT: {act?.reason || act?.phase || 'Connecting…'}. Run starts a fresh attempt from the current arm pose.</p>
+      {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 items-center gap-3 text-sm">
+        <p role="status">{actions?.state.available ? 'Click the electrical-box circle to run. The base stays stationary.' : 'Connecting action controls…'}</p>
+        <button className="rounded-xl border border-line px-5 py-2" onClick={() => client.stopAction()}>Stop / hold</button>
         <button className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
-          disabled={actPending || !view.robotOnline || !(act?.phase === 'paused' || act?.phase === 'running' || (act?.phase === 'ready' && act.inPlace))}
-          onClick={() => void actCommand('run')}>Run ACT</button>
-        <button className="rounded-xl border border-line px-5 py-2 disabled:opacity-40" disabled={!view.robotOnline || !act || act.phase === 'offline'}
-          onClick={() => void actCommand('stop')}>Stop / hold</button>
-        {actError && <p role="alert" className="w-full text-sm text-red-700">{actError}</p>}
+          disabled={actionPending || !view.robotOnline || !actions?.state.available || ['running', 'loading', 'error'].includes(actions.state.phase)}
+          onClick={() => void runPolicy()}>Run ACT</button>
+        {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
       </footer> : <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>
-        {livekit ? <RemoteFreeCam client={client} state={freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
+        {livekit ? <RemoteFreeCam client={client} state={actions?.state.owned ? null : freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
           setDriving(false)
           setDriveStatus('Drive stopped for Free Cam')
         }} />}
         <button
-          disabled={!driving && (robotRole !== 'mobile' || failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
+          disabled={!driving && (robotRole !== 'mobile' || actions?.state.owned || failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
           className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
           onClick={() => {
             setDriveStatus(driving ? 'Drive stopped' : 'Connecting drive…')

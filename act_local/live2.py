@@ -43,7 +43,15 @@ parser.add_argument('--chunk-steps', type=int, default=5, help='execute this man
 parser.add_argument('--hold-start', action='store_true', help='no homing: take the arms where they are (e.g. right after teleop) and run the policy from there')
 parser.add_argument('--yes', action='store_true', help='start without waiting for Enter')
 parser.add_argument('--no-demo-pose', action='store_true', help='start the policy from the adapter home pose instead of the demo start pose')
+parser.add_argument('--visitor-control', type=Path, help='Expiring visitor command file; starts from the current pose')
 args = parser.parse_args()
+visitor = None
+if args.visitor_control:
+    from visitor_control import VisitorControl
+    visitor = VisitorControl(args.visitor_control)
+    visitor.attempt = visitor.read()
+    args.hold_start = args.yes = True
+    visitor.report('loading')
 for name, value in (('duration', args.duration), ('speed', args.speed), ('stale', args.stale), ('ensemble', args.ensemble)):
     if not math.isfinite(value) or value < 0:
         parser.error(f'--{name} must be finite and >= 0')
@@ -134,7 +142,7 @@ print('MODEL READY.' + ('' if args.yes else ' Enter to park the previous ACT ses
 if not args.yes:
     input()
 from bbos import Reader
-for session in ('act-live-0188', 'act-live-continuous', 'act-live-v2', 'act-home-0188'):
+for session in (() if visitor else ('act-live-0188', 'act-live-continuous', 'act-live-v2', 'act-home-0188')):
     if subprocess.run(['tmux', 'has-session', '-t', session], capture_output=True).returncode == 0:
         subprocess.run(['tmux', 'send-keys', '-t', session, 'C-c' if session == 'act-home-0188' else 'q'], check=True)
         deadline = time.monotonic() + 30
@@ -143,15 +151,22 @@ for session in ('act-live-0188', 'act-live-continuous', 'act-live-v2', 'act-home
                 raise RuntimeError(f'{session} did not finish parking; no new controller started')
             time.sleep(.1)
 for side in ('left', 'right'):
-    with Reader(f'arm_{side}.ctrl', keeptime=False) as reader:
+    reader = Reader(f'arm_{side}.ctrl', keeptime=False).__enter__()
+    try:
         deadline = time.monotonic() + 5
         while True:
             reader.ready()
             if not reader.readable:
                 break
             if time.monotonic() >= deadline:
+                if args.hold_start:
+                    print(f'[hold-start] arm_{side}.ctrl writer slot still registered '
+                          f'(killed teleop); taking the arms over anyway', flush=True)
+                    break
                 raise RuntimeError(f'Another controller owns arm_{side}; stop it first')
             time.sleep(.1)
+    finally:
+        reader.__exit__(None, None, None)
 def hold_start():
     """Take the arms where they are (e.g. right after teleop was killed): open the adapter's readers
     and writers without homing, command the current pose, keep torque on."""
@@ -176,6 +191,9 @@ def hold_start():
     print('[hold-start] arms taken over in place, torque on', flush=True)
 
 
+if visitor:
+    while not visitor.tick()[0]:
+        time.sleep(.1)
 if args.hold_start:
     hold_start()
 else:
@@ -199,6 +217,8 @@ paused = False
 def pause(*_):
     global paused
     paused = True
+    if visitor:
+        visitor.hold()
 signal.signal(signal.SIGINT, pause)
 signal.signal(signal.SIGTERM, pause)
 signal.signal(signal.SIGUSR1, pause)
@@ -221,8 +241,18 @@ try:
     with torch.inference_mode():
         while True:
             tick = time.monotonic()
+            if visitor:
+                active, restart = visitor.tick()
+                paused = not active
+                if restart:
+                    policy.reset()
+                    target = last_sent = stale_since = None
+                    started = tick
+                    last_log, steps, clamped = -1, 0, 0
             if select.select([sys.stdin], [], [], 0)[0]:
                 key = sys.stdin.read(1).lower()
+                if visitor and key not in ('e', 'q'):
+                    key = ' '  # Remote attempts start only through a fresh leased command.
                 if key == 'e': robot._estop_now()
                 if key == 'q':
                     if time.monotonic() - last_q > 2.0:
@@ -281,7 +311,8 @@ try:
             action = np.clip(action, current - band, current + band)      # never lead the arm further than the demos did
             action = np.clip(action, lows, highs)
             clamped += int(np.any(np.abs(action - raw) > 1e-3))
-            if paused or (args.duration and time.monotonic() - started >= args.duration):
+            if (paused or (visitor and visitor.read() != visitor.attempt)
+                    or (args.duration and time.monotonic() - started >= args.duration)):
                 pause()
                 continue
             last_sent = action
@@ -296,6 +327,9 @@ try:
                 last_log = second
             time.sleep(max(0, tick_s - (time.monotonic() - tick)))
 except Exception as exc:
+    if visitor:
+        visitor.hold()
+        visitor.report('error', str(exc))
     print('PAUSING:', repr(exc), flush=True)
 finally:
     if sys.exc_info()[0] is SystemExit or not robot._writers:
@@ -305,6 +339,8 @@ finally:
     target = {k: observation[k] for k in names}
     print(f'PAUSED after {steps} actions. Holding current pose. Q parks, E cuts torque.', flush=True)
     while True:
+        if visitor:
+            visitor.report('error', 'Policy stopped after an error; operator restart required')
         if select.select([sys.stdin], [], [], 0)[0]:
             key = sys.stdin.read(1).lower()
             if key == 'e': robot._estop_now()

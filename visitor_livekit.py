@@ -15,7 +15,7 @@ from websockets.asyncio.client import connect
 
 from edge_agent.demo_session import DemoConfig, legacy_guard, single_session
 from visitor_freecam import FreeCamRelay
-from visitor_act import ActRelay
+from visitor_actions import ActionRelay
 
 
 class KeyboardRelay:
@@ -91,7 +91,7 @@ class KeyboardRelay:
                 self.task = None
 
 
-async def camera(room, http, media, relay, freecam=None):
+async def camera(room, http, media, relay, freecam=None, actions=None, controller=None):
     frames = queue.Queue(maxsize=1)
     async def read():
         size = None
@@ -109,10 +109,16 @@ async def camera(room, http, media, relay, freecam=None):
             if (health.get('status') != 'running'
                     or not 0 <= time.time_ns() - health.get('source_timestamp_ns', 0) < 1_000_000_000):
                 await relay.stop()
+                if actions:
+                    actions.stop()
                 if time.time_ns() - health.get('source_timestamp_ns', 0) > 5_000_000_000:
                     raise RuntimeError('Camera stale')
                 await asyncio.sleep(.1)
                 continue
+            if actions:
+                await room.local_participant.publish_data(json.dumps({
+                    'points': health.get('visible_actions', []), 'state': actions.snapshot(),
+                }), reliable=False, topic='realbot.actions', destination_identities=[controller])
             response = await http.get('/frame.jpg')
             response.raise_for_status()
             frame = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
@@ -152,11 +158,10 @@ async def run(config, freecam_path=None, stationary=False):
 
     daemon = Path(media.__file__).parent
     legacy_guard(daemon)
-    if stationary and freecam_path:
-        raise ValueError('Stationary ACT robot cannot enable Free Cam')
     relay = KeyboardRelay(config.controller)
     freecam = FreeCamRelay.load(config.controller, freecam_path) if freecam_path else None
-    act = ActRelay(config.controller) if stationary else None
+    actions = ActionRelay(config.controller)
+    actions.enabled = actions.enabled and config.mode == 'drive'
     control_lock = asyncio.Lock()
     room = rtc.Room()
     shutdown = asyncio.Event()
@@ -165,12 +170,8 @@ async def run(config, freecam_path=None, stationary=False):
     room.on('disconnected', lambda *_: shutdown.set())
     room.on('reconnecting', lambda *_: shutdown.set())
     async def stop_controls():
+        actions.stop()
         await relay.stop()
-        if act:
-            try:
-                await act.stop()
-            except (ValueError, asyncio.TimeoutError):
-                pass
         if freecam:
             try:
                 await freecam.stop()
@@ -187,8 +188,8 @@ async def run(config, freecam_path=None, stationary=False):
             relay.receive(packet.participant.identity, packet.data)
         elif packet.topic == 'realbot.freecam' and freecam:
             freecam.receive(packet.participant.identity, packet.data)
-        elif packet.topic == 'realbot.act' and act:
-            act.receive(packet.participant.identity, packet.data)
+        elif packet.topic == 'realbot.action_pulse':
+            actions.receive(packet.participant.identity, packet.data)
     room.on('data_received', received)
 
     async def start(data):
@@ -196,6 +197,8 @@ async def run(config, freecam_path=None, stationary=False):
             raise ValueError('Driving is disabled for this session')
         try:
             async with control_lock:
+                if actions.owned:
+                    raise ValueError('Finish the arm policy session before driving')
                 if freecam and (freecam.nonce or freecam.state.get('phase') != 'idle'):
                     raise ValueError('Release Free Cam control before driving')
                 return await relay.start(data.caller_identity, data.payload)
@@ -210,19 +213,27 @@ async def run(config, freecam_path=None, stationary=False):
         return '{}'
 
     async def freecam_command(data):
-        if not freecam or config.mode != 'drive':
+        if not freecam or config.mode != 'drive' or stationary:
             raise ValueError('Free Cam unavailable for this session')
         async with control_lock:
+            if actions.owned:
+                raise ValueError('Finish the arm policy session before Free Cam')
             return await freecam.command(data.caller_identity, data.payload, relay)
 
-    async def act_command(data):
-        if not act or config.mode != 'drive':
-            raise ValueError('ACT control unavailable for this robot')
-        return await act.command(data.caller_identity, data.payload)
+    async def action_command(data):
+        try:
+            async with control_lock:
+                message = actions.validate(data.caller_identity, data.payload)
+                async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=.5) as http:
+                    health = (await http.get('/health')).json() if message.get('action') == 'start' else {}
+                await actions.command(data.caller_identity, data.payload, health, relay, freecam)
+                return json.dumps(actions.snapshot())
+        except ValueError as error:
+            raise rtc.RpcError(2001, str(error)) from None
 
     async def state():
-        act_at = 0
         while not shutdown.is_set() and time.time() < config.expires:
+            await actions.tick()
             legacy_guard(daemon)
             await room.local_participant.publish_data(
                 json.dumps({'at': int(time.time() * 1000), 'nonce': relay.nonce}),
@@ -230,11 +241,6 @@ async def run(config, freecam_path=None, stationary=False):
             if freecam:
                 await room.local_participant.publish_data(
                     json.dumps(await freecam.tick()), reliable=False, topic='realbot.freecam_state',
-                    destination_identities=[config.controller])
-            if act and time.monotonic() - act_at >= .5:
-                act_at = time.monotonic()
-                await room.local_participant.publish_data(
-                    json.dumps(await act.tick()), reliable=False, topic='realbot.act_state',
                     destination_identities=[config.controller])
             await asyncio.sleep(.1)
 
@@ -245,10 +251,10 @@ async def run(config, freecam_path=None, stationary=False):
             room.local_participant.register_rpc_method('realbot.keyboard.start', start)
             room.local_participant.register_rpc_method('realbot.keyboard.stop', stop)
             room.local_participant.register_rpc_method('realbot.freecam.command', freecam_command)
-            room.local_participant.register_rpc_method('realbot.act.command', act_command)
+            room.local_participant.register_rpc_method('realbot.action.command', action_command)
             print('LiveKit connected; publishing annotated left camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
-                tasks = [asyncio.create_task(camera(room, http, media, relay, freecam)),
+                tasks = [asyncio.create_task(camera(room, http, media, relay, freecam, actions, config.controller)),
                          asyncio.create_task(maps(room, http, config.controller)),
                          asyncio.create_task(state()), asyncio.create_task(shutdown.wait())]
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -268,7 +274,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--free-cam', type=Path, help='Private local Free Cam connection JSON')
-    parser.add_argument('--stationary', action='store_true', help='Stationary ACT robot: run/pause the loaded policy and reject base driving')
+    parser.add_argument('--stationary', action='store_true', help='Disable base driving and Free Cam')
     args = parser.parse_args()
     try:
         asyncio.run(run(DemoConfig.load(args.config), args.free_cam, args.stationary))
