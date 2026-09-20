@@ -15,7 +15,8 @@ const ControlPage = lazy(() => import('./pages/ControlPage').then((m) => ({ defa
 const LiveTelemetryPage = lazy(() => import('./pages/LiveTelemetryPage').then((m) => ({ default: m.LiveTelemetryPage })))
 const LiveDrivePage = lazy(() => import('./pages/LiveDrivePage').then((m) => ({ default: m.LiveDrivePage })))
 const SshCameraPage = lazy(() => import('./pages/SshCameraPage').then((m) => ({ default: m.SshCameraPage })))
-const sshCameraEnabled = import.meta.env.DEV && ['ssh', 'livekit'].includes(import.meta.env.VITE_ROBOT_TRANSPORT)
+const sshCameraEnabled = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
+  || (import.meta.env.DEV && import.meta.env.VITE_ROBOT_TRANSPORT === 'ssh')
 
 function VisitorControl() {
   if (sshCameraEnabled) return <SshCameraPage />

@@ -51,6 +51,17 @@ Tokens and the bridge expire after 60 minutes. Drive requires a fresh enable aft
 disconnect; stale commands, missing heartbeats, and browser focus loss stop it.
 This localhost token handoff is a development demo, not production guest authorization.
 
+### Vercel visitor demo
+
+Deploy from the repository root with `vercel --prod`. Set `VITE_ROBOT_TRANSPORT=livekit`,
+`LIVEKIT_VISITOR_SESSION` to the private browser-session JSON plus `visitorRoomId: "0188"`,
+and `LIVEKIT_ACCESS_CODE_SHA256` to the SHA-256 hex digest of a randomly generated access code.
+The latter two are server-only sensitive environment variables. The LiveKit signing secret
+stays off Vercel. Visitors enter the robot ID on the home page, then the private robot code.
+The API rejects missing/wrong codes, other robots, and expired sessions. Renew the existing
+robot/browser credential pair and update the Vercel session environment before redeploying.
+This is a single-controller, expiring demo; the planned guest-invitation service is separate.
+
 For a local visitor session on 0188, keep this tunnel running:
 
 ```sh

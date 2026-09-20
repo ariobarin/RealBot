@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { PageShell } from '../components/ui/PageShell'
 import { startKeyboardDrive } from '../lib/keyboardDrive'
 import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
 import { VisitorLiveKit } from '../lib/visitorLiveKit'
 import type { LiveView } from '../lib/liveTelemetryClient'
+import { parseViewerSession } from '../lib/liveTelemetry'
 
 const livekit = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
 
 export function SshCameraPage() {
+  const { roomId } = useParams()
+  const [accessCode, setAccessCode] = useState('')
+  const [connectionError, setConnectionError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [failed, setFailed] = useState(false)
   const [driving, setDriving] = useState(false)
@@ -19,16 +23,30 @@ export function SshCameraPage() {
   const client = useRef<VisitorLiveKit | null>(null)
 
   useEffect(() => {
-    if (!livekit) return
+    if (!livekit || (import.meta.env.PROD && !accessCode)) return
     const abort = new AbortController()
     const connection = new VisitorLiveKit(setView, setMap)
     client.current = connection
-    fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store' })
-      .then((response) => { if (!response.ok) throw new Error('Session unavailable'); return response.json() })
+    fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store',
+      ...(import.meta.env.PROD ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessCode, roomId }) } : {}),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const detail = await response.json().catch(() => null)
+          throw new Error(detail?.error || 'Robot session unavailable')
+        }
+        return parseViewerSession(await response.json())
+      })
       .then((session) => { if (!abort.signal.aborted) return connection.connect(session) })
-      .catch(() => { if (!abort.signal.aborted) setFailed(true) })
+      .catch((error: unknown) => {
+        if (!abort.signal.aborted) {
+          setConnectionError(error instanceof Error ? error.message : 'Robot session unavailable')
+          setFailed(true)
+        }
+      })
     return () => { abort.abort(); connection.disconnect(); client.current = null }
-  }, [attempt])
+  }, [attempt, accessCode, roomId])
 
   useEffect(() => {
     if (!view.camera || !video.current) return
@@ -50,11 +68,24 @@ export function SshCameraPage() {
         </div>
         <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>
       </header>
-      {failed ? (
+      {livekit && import.meta.env.PROD && !accessCode ? (
+        <form className="m-auto flex w-full max-w-sm flex-col gap-4" onSubmit={(event) => {
+          event.preventDefault()
+          setFailed(false)
+          setAccessCode(String(new FormData(event.currentTarget).get('accessCode') || '').trim())
+        }}>
+          <label className="text-sm">Robot access code
+            <input name="accessCode" type="password" required autoComplete="off"
+              className="mt-2 block w-full rounded-xl border border-line p-3" />
+          </label>
+          <button className="rounded-xl bg-ink px-5 py-2 text-white">Connect</button>
+        </form>
+      ) : failed ? (
         <div role="alert" className="rounded-2xl border border-line p-8 text-center">
-          <p>The camera connection is unavailable.</p>
+          <p>{connectionError || 'The camera connection is unavailable.'}</p>
           <button className="mt-4 rounded-xl bg-ink px-5 py-2 text-white" onClick={() => {
             setFailed(false)
+            if (import.meta.env.PROD) setAccessCode('')
             setAttempt((value) => value + 1)
           }}>Reconnect</button>
         </div>
