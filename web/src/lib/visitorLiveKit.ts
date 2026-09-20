@@ -36,6 +36,7 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   private actionAttempt = ''
   private actionSequence = 0
   private actionAt = 0
+  private rightCameraAt = 0
   private actionSending = false
 
   constructor(changed: (view: LiveView) => void, mapChanged: (map: MapSnapshot | null) => void,
@@ -90,6 +91,8 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     }
     if (this.watch) clearInterval(this.watch)
     this.watch = setInterval(() => {
+      if (this.view.rightCameraFresh && performance.now() - this.rightCameraAt > 750)
+        this.update({ rightCameraFresh: false })
       if (performance.now() - this.clockAt > 750) {
         this.drive?.closed('Drive connection interrupted')
         this.freeCamChanged(null)
@@ -104,6 +107,14 @@ export class VisitorLiveKit extends LiveTelemetryClient {
   }
 
   protected override onRobotData(bytes: Uint8Array, topic?: string) {
+    if (topic === 'realbot.right_camera' && bytes.length < 128) {
+      try {
+        const state = JSON.parse(new TextDecoder().decode(bytes))
+        this.rightCameraAt = performance.now()
+        this.update({ rightCameraFresh: state.fresh === true })
+      } catch { /* Ignore invalid camera state. */ }
+      return
+    }
     if (topic === 'realbot.actions' && bytes.length < 32_768) {
       try {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as ActionView

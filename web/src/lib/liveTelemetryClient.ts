@@ -7,6 +7,8 @@ export interface LiveView {
   telemetry?: Telemetry
   telemetryFresh: boolean
   camera?: RemoteVideoTrack
+  rightCamera?: RemoteVideoTrack
+  rightCameraFresh?: boolean
   error?: string
 }
 
@@ -46,7 +48,11 @@ export class LiveTelemetryClient {
         (pub) => pub.trackName === 'cam-wrist' && !pub.isMuted,
       )
       const track = publication?.videoTrack
-      this.update({ robotOnline: !!robot, camera: track instanceof RemoteVideoTrack ? track : undefined })
+      const rightTrack = [...(robot?.videoTrackPublications.values() ?? [])].find(
+        (pub) => pub.trackName === 'cam-right' && !pub.isMuted,
+      )?.videoTrack
+      this.update({ robotOnline: !!robot, camera: track instanceof RemoteVideoTrack ? track : undefined,
+        rightCamera: rightTrack instanceof RemoteVideoTrack ? rightTrack : undefined })
       if (!robot) {
         this.lastSourceAt = -1
         this.update({ telemetry: undefined, telemetryFresh: false })
@@ -58,14 +64,14 @@ export class LiveTelemetryClient {
     room.on(RoomEvent.TrackUnsubscribed, refresh)
     room.on(RoomEvent.TrackMuted, refresh)
     room.on(RoomEvent.TrackUnmuted, refresh)
-    // Subscribe only to the intended robot's head video. No local tracks are published.
+    // Subscribe only to the intended robot's head and right-arm video.
     const subscribeTracks = () => {
       for (const participant of room.remoteParticipants.values()) {
         for (const pub of participant.trackPublications.values()) {
           pub.setSubscribed(
             participant.identity === session.robotIdentity &&
               pub.kind === Track.Kind.Video &&
-              pub.trackName === 'cam-wrist',
+              ['cam-wrist', 'cam-right'].includes(pub.trackName),
           )
         }
       }
@@ -89,6 +95,8 @@ export class LiveTelemetryClient {
           robotOnline: false,
           telemetryFresh: false,
           camera: undefined,
+          rightCamera: undefined,
+          rightCameraFresh: false,
         })
     })
     room.on(RoomEvent.Reconnected, () => {
@@ -141,6 +149,8 @@ export class LiveTelemetryClient {
       telemetry: undefined,
       telemetryFresh: false,
       camera: undefined,
+      rightCamera: undefined,
+      rightCameraFresh: false,
     })
   }
 }
