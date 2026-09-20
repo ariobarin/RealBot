@@ -163,6 +163,15 @@ export class VisitorLiveKit extends LiveTelemetryClient {
     }
   }
 
+  async runScript(script: 'init' | 'go' | 'stop'): Promise<{ reason?: string }> {
+    if (!this.room || !this.view.robotOnline) throw new Error('Robot disconnected')
+    return JSON.parse(await this.room.localParticipant.performRpc({ destinationIdentity: this.robot,
+      method: 'realbot.act_script.run', responseTimeout: 5000,
+      payload: JSON.stringify({ script,
+        expiresAt: Math.floor(this.clock + performance.now() - this.clockAt + 700) }),
+    }))
+  }
+
   private async actionCommand(action: string, id?: string) {
     if (!this.room) throw new Error('Robot disconnected')
     return this.room.localParticipant.performRpc({ destinationIdentity: this.robot,

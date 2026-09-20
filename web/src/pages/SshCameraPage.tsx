@@ -37,18 +37,26 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const [actions, setActions] = useState<ActionView | null>(null)
   const [actionPending, setActionPending] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [scriptStatus, setScriptStatus] = useState('')
   const [armCameraOpen, setArmCameraOpen] = useState(false)
   const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
   const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
   const readActionPoints = useCallback(() => client.readActionPoints(), [client])
-  async function runPolicy() {
-    setArmCameraOpen(true)
+  async function runScript(script: 'init' | 'go' | 'stop', label: string) {
+    if (script !== 'stop') setArmCameraOpen(true)
     setActionPending(true)
     setActionError('')
-    try { await client.startAction('policy:electric_box') }
-    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not start ACT') }
-    finally { setActionPending(false) }
+    setScriptStatus(script === 'init'
+      ? 'Initializing: homing the arms and starting Quest teleop. Wait for READY before Go.'
+      : `${label}…`)
+    try {
+      const status = await client.runScript(script)
+      setScriptStatus(status?.reason ? `${label}: ${status.reason}` : `${label} started`)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : `Could not run ${label}`)
+      setScriptStatus('')
+    } finally { setActionPending(false) }
   }
   const changeView = useCallback((_viewing: boolean) => {
     setDriving(false)
@@ -170,17 +178,20 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
       </aside>}
       </div>
       {armCameraOpen && <ArmCameraPopup track={view.rightCamera} fresh={!!view.rightCameraFresh && view.robotOnline}
-        onClose={() => setArmCameraOpen(false)} onStop={() => client.stopAction()} />}
+        onClose={() => setArmCameraOpen(false)} onStop={() => void runScript('stop', 'Stop')} />}
       {livekit && (robotRole === 'act' || actions?.state.available) && <button
         className="mt-2 self-end rounded-xl border border-line px-4 py-2 text-sm"
         onClick={() => setArmCameraOpen(true)}>Right-arm camera</button>}
-      {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 items-center gap-3 text-sm">
-        <p role="status">{actionPending ? 'Starting ACT…' : actions?.state.reason || (actions?.state.available
-          ? 'Run ACT starts the arms. Stop / hold pauses them. The base stays stationary.' : 'Connecting action controls…')}</p>
-        <button className="rounded-xl border border-line px-5 py-2" onClick={() => client.stopAction()}>Stop / hold</button>
+      {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 flex-wrap items-center gap-3 text-sm">
+        <p role="status">{scriptStatus || 'Initialize (guided) homes the arms and starts teleop, Go runs the policy, Stop holds it. The base stays stationary.'}</p>
+        <button className="rounded-xl border border-line px-5 py-2 disabled:opacity-40"
+          disabled={actionPending || !view.robotOnline}
+          onClick={() => void runScript('init', 'Initialize (guided)')}>Initialize (guided)</button>
         <button className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
-          disabled={actionPending || !view.robotOnline || !actions?.state.available || ['running', 'loading', 'error'].includes(actions.state.phase)}
-          onClick={() => void runPolicy()}>Run ACT</button>
+          disabled={actionPending || !view.robotOnline}
+          onClick={() => void runScript('go', 'Go')}>Go</button>
+        <button className="rounded-xl border border-line px-5 py-2"
+          onClick={() => void runScript('stop', 'Stop')}>Stop</button>
         {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
       </footer> : <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>

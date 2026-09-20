@@ -15,7 +15,7 @@ from websockets.asyncio.client import connect
 
 from edge_agent.demo_session import DemoConfig, legacy_guard, single_session
 from visitor_freecam import FreeCamRelay
-from visitor_actions import ActionRelay
+from visitor_actions import ActionRelay, ScriptRelay
 
 
 class KeyboardRelay:
@@ -211,6 +211,8 @@ async def run(config, freecam_path=None, stationary=False):
     freecam = FreeCamRelay.load(config.controller, freecam_path) if freecam_path else None
     actions = ActionRelay(config.controller)
     actions.enabled = actions.enabled and config.mode == 'drive'
+    scripts = ScriptRelay(config.controller)
+    scripts.enabled = scripts.enabled and config.mode == 'drive'
     control_lock = asyncio.Lock()
     room = rtc.Room()
     shutdown = asyncio.Event()
@@ -280,6 +282,13 @@ async def run(config, freecam_path=None, stationary=False):
         except ValueError as error:
             raise rtc.RpcError(2001, str(error)) from None
 
+    async def act_script(data):
+        try:
+            async with control_lock:
+                return json.dumps(await scripts.run(data.caller_identity, data.payload))
+        except ValueError as error:
+            raise rtc.RpcError(2001, str(error)) from None
+
     async def action_points(data):
         return await read_action_points(config.controller, data.caller_identity)
 
@@ -305,6 +314,7 @@ async def run(config, freecam_path=None, stationary=False):
             room.local_participant.register_rpc_method('realbot.freecam.command', freecam_command)
             room.local_participant.register_rpc_method('realbot.action.command', action_command)
             room.local_participant.register_rpc_method('realbot.action_points.read', action_points)
+            room.local_participant.register_rpc_method('realbot.act_script.run', act_script)
             print('LiveKit connected; publishing annotated left camera and map', flush=True)
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8006', timeout=5) as http:
                 tasks = [asyncio.create_task(camera(room, http, media, relay, freecam, actions, config.controller)),

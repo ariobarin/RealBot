@@ -134,3 +134,79 @@ class ActionRelay:
                 pass
         return dict(self.state, available=self.enabled, owned=self.owned,
                     attempt=self.attempt or self.state.get('attempt', ''))
+
+
+SCRIPTS = {'init': ('demo.sh', 'guided'), 'go': ('go.sh',), 'stop': ('stop.sh',)}
+
+
+class ScriptRelay:
+    """The three operator demo scripts in ~/act-local, exposed to the 0188 panel.
+
+    Only the fixed command lines in SCRIPTS can run and nothing from the payload ever
+    reaches them, so the panel cannot ask for anything else. They run detached because
+    `demo.sh guided` waits for quest_teleop to finish its staged homing, far longer than
+    an RPC round trip. Initialize and Go also need somebody at the robot: Initialize
+    starts Quest teleop so an operator can place the finger in the latch, and Go hands
+    the arms to the policy from wherever they were left.
+    """
+
+    def __init__(self, controller, root=Path('/home/bracketbot/act-local')):
+        self.controller, self.root = controller, root
+        self.enabled = (socket.gethostname() == 'bracketbot-0188'
+                        and (root / 'run-v3/best/model.safetensors').is_file())
+        self.running = ''
+        self.result = {}
+        self.task = None
+
+    def validate(self, caller, payload):
+        if caller != self.controller or len(payload) > 1024:
+            raise ValueError('Unauthorized script command')
+        message = json.loads(payload)
+        expiry = message.get('expiresAt')
+        if type(expiry) is not int or not 0 < expiry - time.time() * 1000 <= 750:
+            raise ValueError('Script command expired')
+        return message
+
+    async def run(self, caller, payload):
+        message = self.validate(caller, payload)
+        name = message.get('script')
+        if name not in SCRIPTS:
+            raise ValueError('Unknown script')
+        if not self.enabled:
+            raise ValueError('The demo scripts run only on 0188')
+        # Stop is always allowed; it is the way out of a run that is misbehaving.
+        if self.running and name != 'stop':
+            raise ValueError(f'{self.running} is still running; wait for it to finish')
+        self.running = name
+        self.result = {'script': name, 'phase': 'running', 'at': int(time.time() * 1000),
+                       'reason': f'{name} started'}
+        self.task = asyncio.create_task(self.execute(name))
+        return self.status()
+
+    async def execute(self, name):
+        log = self.root / f'panel-{name}.log'
+        code, detail = None, ''
+        try:
+            with log.open('wb') as handle:
+                process = await asyncio.create_subprocess_exec(
+                    str(self.root / SCRIPTS[name][0]), *SCRIPTS[name][1:], cwd=str(self.root),
+                    stdin=asyncio.subprocess.DEVNULL, stdout=handle,
+                    stderr=asyncio.subprocess.STDOUT)
+                code = await asyncio.wait_for(process.wait(), 180)
+        except asyncio.TimeoutError:
+            detail = f'{name} timed out after 180 s'
+        except OSError as error:
+            detail = f'{name} could not start ({type(error).__name__})'
+        if not detail:
+            try:
+                lines = [line for line in log.read_text().splitlines() if line.strip()]
+                detail = lines[-1][:160] if lines else f'{name} finished'
+            except OSError:
+                detail = f'{name} finished'
+        self.result = {'script': name, 'phase': 'done' if code == 0 else 'failed',
+                       'at': int(time.time() * 1000), 'exit': code, 'reason': detail}
+        if self.running == name:
+            self.running = ''
+
+    def status(self):
+        return dict(self.result, available=self.enabled, running=self.running)

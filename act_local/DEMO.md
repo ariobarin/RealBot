@@ -57,20 +57,28 @@ command. The door-open motion is left J5 (the sixth value) climbing from near 0 
 
 See `README.md` in this directory for the training pipeline and why the first attempt failed.
 
-## Visitor ACT controls
+## Panel buttons on the 0188 page
 
-The stationary 0188 panel starts this policy with **Run ACT** and stops it with **Stop / hold**.
-It is enabled only on 0188 when the checkpoint is installed. Position the robot and arms
-at the box first: this starts from the current pose, without navigation, homing, or a reset ramp.
-Saved action circles are display-only; no waypoint selection is required.
+The stationary 0188 panel runs the same three scripts an operator would run over SSH, so the
+browser and the terminal drive the demo identically. They are enabled only on 0188 with the
+checkpoint installed, and nothing typed in the browser reaches a shell: the panel can ask for
+these three fixed command lines and nothing else.
 
-Deploy the updated `hand_tracking.py`, `visitor_livekit.py`, `visitor_actions.py`,
-`act_local/live2.py`, and `act_local/visitor_control.py` with the visitor bridge.
-It reuses `~/act-local` weights and Python environment. Existing ACT or Quest sessions must finish first; Run ACT never
-kills them. The managed session is `visitor-act`.
+| Button | Runs | Notes |
+|---|---|---|
+| **Initialize (guided)** | `demo.sh guided` | Parks whatever holds the arms, starts Quest teleop, loads the policy, and waits for teleop's staged homing before reporting READY. Someone has to be at the robot wearing the headset for this to be useful, since its purpose is to let a person place the finger in the latch. |
+| **Go** | `go.sh` | Hands off from teleop when it is running, otherwise ramps back to the demo start pose and runs a fresh attempt. Also opens the wrist camera. |
+| **Stop** | `stop.sh` | Pauses the policy and holds the arms with torque on. Never disabled, so it is always the way out. |
 
-**Stop action**, Escape, leaving the page, or a lost connection pauses and holds the arms.
-A later press of Run ACT starts a new attempt. There is no fixed run timeout; the policy
-does not detect that the door is open, so press Stop once it opens. Stale observations also pause the policy. WASD and Free Cam stay
-locked while the policy owns the arms. At the end, an operator can park and exit with
-`tmux send-keys -t visitor-act q q`; only do this when the parking path is clear.
+The scripts run detached, because Initialize waits up to two minutes for homing, which is far
+longer than an RPC. Each button reports the script's last printed line when it finishes. Go is
+refused while another script is still running; Stop is not.
+
+Deploy `hand_tracking.py`, `visitor_livekit.py`, `visitor_actions.py`, `act_local/live2.py`,
+`act_local/visitor_control.py` and the three scripts with the visitor bridge. They reuse the
+`~/act-local` weights and Python environment.
+
+The policy cannot tell that the door opened and Go sets no run timeout, so press Stop once it
+opens. A lost connection, leaving the page, or stale observations also pause and hold the arms.
+WASD and Free Cam stay locked while the policy owns them. At the end, an operator parks and
+exits with `~/act-local/stop.sh park`, and only when the parking path is clear.

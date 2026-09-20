@@ -5,7 +5,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 
 const mocks = vi.hoisted(() => ({
-  changed: (_view: unknown) => {}, session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(),
+  changed: (_view: unknown) => {}, session: vi.fn(), snapshot: vi.fn(), fetch: vi.fn(), disconnect: vi.fn(), startAction: vi.fn(), stopAction: vi.fn(), runScript: vi.fn(),
 }))
 vi.mock('../lib/visitorSession', () => ({ requestVisitorSession: mocks.session, visitorAccessCode: () => '' }))
 vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
@@ -23,6 +23,7 @@ vi.mock('../lib/visitorLiveKit', () => ({ VisitorLiveKit: class {
   disconnect() { mocks.disconnect(); this.changed({ connection: 'disconnected', robotOnline: false }) }
   startAction = mocks.startAction
   stopAction = mocks.stopAction
+  runScript = mocks.runScript
   readActionPoints = mocks.snapshot
 } }))
 vi.mock('../components/control/RemoteFreeCam', () => ({ RemoteFreeCam: () => null }))
@@ -34,23 +35,34 @@ beforeAll(async () => {
   RobotCameraPanel = (await import('./SshCameraPage')).RobotCameraPanel
 })
 
-it('runs ACT from the button without a waypoint and keeps Stop available during startup', async () => {
+it('runs the three demo scripts from the panel and keeps Stop available during a run', async () => {
   mocks.session.mockResolvedValue({ roomId: '0188', robotRole: 'act' })
-  let finish!: () => void
-  mocks.startAction.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+  let finish!: (value: { reason: string }) => void
+  mocks.runScript.mockImplementation(() => new Promise<{ reason: string }>(resolve => { finish = resolve }))
   render(<MemoryRouter><RobotCameraPanel setup /></MemoryRouter>)
   fireEvent.change(screen.getByLabelText('Robot access code'), { target: { value: '0188' } })
   fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }))
-  const run = await screen.findByRole('button', { name: 'Run ACT' })
-  expect(mocks.startAction).not.toHaveBeenCalled()
-  fireEvent.click(run)
-  fireEvent.click(run)
-  expect(mocks.startAction).toHaveBeenCalledExactlyOnceWith('policy:electric_box')
+  const go = await screen.findByRole('button', { name: 'Go' })
+  const init = screen.getByRole('button', { name: 'Initialize (guided)' })
+  expect(mocks.runScript).not.toHaveBeenCalled()
+  fireEvent.click(init)
+  expect(mocks.runScript).toHaveBeenCalledExactlyOnceWith('init')
+  expect(screen.getByText(/Wait for READY before Go/)).toBeTruthy()
+  finish({ reason: 'READY: teleop homed, policy loaded' })
+  await waitFor(() => expect((init as HTMLButtonElement).disabled).toBe(false))
+
+  // Go opens the wrist camera, and a double click cannot start two attempts.
+  fireEvent.click(go)
+  fireEvent.click(go)
+  expect(mocks.runScript).toHaveBeenLastCalledWith('go')
+  expect(mocks.runScript).toHaveBeenCalledTimes(2)
   expect(screen.getByRole('dialog', { name: 'Right-arm camera' })).toBeTruthy()
-  fireEvent.click(screen.getAllByRole('button', { name: 'Stop / hold' })[0])
-  expect(mocks.stopAction).toHaveBeenCalledOnce()
-  finish()
-  await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false))
+
+  // Stop stays clickable while Go is still in flight.
+  fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  expect(mocks.runScript).toHaveBeenLastCalledWith('stop')
+  finish({ reason: 'stop finished' })
+  await waitFor(() => expect((go as HTMLButtonElement).disabled).toBe(false))
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks() })
 
@@ -85,12 +97,12 @@ it('can reconnect when the robot disappears without a connection error', async (
   render(<MemoryRouter><RobotCameraPanel setup={false} /></MemoryRouter>)
   fireEvent.change(screen.getByLabelText('Robot access code'), { target: { value: '0188' } })
   fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }))
-  await screen.findByRole('button', { name: 'Run ACT' })
+  await screen.findByRole('button', { name: 'Go' })
   act(() => mocks.changed({ connection: 'connected', robotOnline: false }))
   const reconnect = screen.getByRole('button', { name: 'Reconnect' })
   expect(screen.getByText('Robot offline. Turn it on, then reconnect.')).toBeTruthy()
   fireEvent.click(reconnect)
   await waitFor(() => expect(mocks.session).toHaveBeenCalledTimes(2))
   expect(mocks.disconnect).toHaveBeenCalledOnce()
-  expect(mocks.startAction).not.toHaveBeenCalled()
+  expect(mocks.runScript).not.toHaveBeenCalled()
 })
