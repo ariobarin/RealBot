@@ -16,6 +16,7 @@ test('map view loads the SLAM grid with HUD, legend and view controls', async ({
   await expect(page.getByText('158 m²')).toBeVisible()
   await expect(page.getByText('SLAM · 5 cm')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Dictate interactables' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Open for viewing' })).toBeVisible()
 
   const toggle = page.getByTestId('mode-toggle')
   await expect(toggle.getByRole('radio', { name: '3D' })).toHaveAttribute('aria-checked', 'true')
@@ -25,6 +26,14 @@ test('map view loads the SLAM grid with HUD, legend and view controls', async ({
 
   await page.getByRole('link', { name: /Your spaces/ }).click()
   await expect(page).toHaveURL('/realtor')
+})
+
+test('open for viewing starts the realtor scheduling flow', async ({ page }) => {
+  await page.goto('/map/small-house')
+  await expect(page.getByTestId('map-view')).toHaveAttribute('data-status', 'ready', { timeout: 10_000 })
+  await page.getByRole('button', { name: 'Open for viewing' }).click()
+  await expect(page).toHaveURL('/map/small-house/viewing')
+  await expect(page.getByRole('heading', { name: 'Open for viewing' })).toBeVisible()
 })
 
 test('TurtleBot3 Sandbox renders through the same map view', async ({ page }) => {

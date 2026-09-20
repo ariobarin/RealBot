@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { ArrowLeft } from 'lucide-react'
 import { useEffect } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { MapHud } from '../components/map/MapHud'
 import { MapScene } from '../components/map/MapScene'
 import { SceneBoundary } from '../components/map/SceneBoundary'
@@ -13,6 +13,7 @@ import { useViewStore } from '../store/useViewStore'
 
 export function MapPage() {
   const { mapId = '' } = useParams()
+  const navigate = useNavigate()
   const { status, grid, summary, error, load } = useGridStore()
   const clearWaypoints = useViewStore((s) => s.clearWaypoints)
 
@@ -47,7 +48,11 @@ export function MapPage() {
             <SceneBoundary summary={summary}>
               <MapScene grid={grid} cloud={summary.cloud} />
             </SceneBoundary>
-            <MapHud summary={summary} grid={grid} />
+            <MapHud
+              summary={summary}
+              grid={grid}
+              onOpenViewing={() => void navigate(`/map/${encodeURIComponent(mapId)}/viewing`)}
+            />
           </>
         )}
 

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Locate, Mic, MousePointerClick, Trash2 } from 'lucide-react'
+import { Eye, Locate, Mic, MousePointerClick, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { botClient, type SentCommand } from '../../lib/botClient'
 import type { GridMap } from '../../lib/grid'
@@ -124,9 +124,10 @@ function CommandToast() {
 interface MapHudProps {
   summary: MapSummary
   grid: GridMap
+  onOpenViewing: () => void
 }
 
-export function MapHud({ summary, grid }: MapHudProps) {
+export function MapHud({ summary, grid, onOpenViewing }: MapHudProps) {
   const mode = useViewStore((s) => s.mode)
   const setMode = useViewStore((s) => s.setMode)
   const resetView = useViewStore((s) => s.resetView)
@@ -154,7 +155,7 @@ export function MapHud({ summary, grid }: MapHudProps) {
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...easeOut, delay: 0.2 }}
-        className="pointer-events-auto absolute right-4 top-4 sm:right-5 sm:top-5"
+        className="pointer-events-auto absolute right-4 top-4 flex flex-col items-end gap-2 sm:right-5 sm:top-5"
       >
         <button
           type="button"
@@ -163,6 +164,13 @@ export function MapHud({ summary, grid }: MapHudProps) {
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-ink-2 disabled:cursor-not-allowed ${glass}`}
         >
           <Mic size={16} /> Dictate interactables
+        </button>
+        <button
+          type="button"
+          onClick={onOpenViewing}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-ink ${glass}`}
+        >
+          <Eye size={16} /> Open for viewing
         </button>
       </motion.div>
 

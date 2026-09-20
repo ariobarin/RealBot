@@ -7,6 +7,7 @@ import { PlaceholderPage } from './pages/PlaceholderPage'
 import { RealtorSignInPage } from './pages/RealtorSignInPage'
 import { ToursPage } from './pages/ToursPage'
 import { BookingsPage } from './pages/BookingsPage'
+import { OpenViewingPage } from './pages/OpenViewingPage'
 import { useAuth } from './auth/useAuth'
 
 /** three.js only ships when a map is opened. */
@@ -85,6 +86,14 @@ export default function App() {
                 <ControlPage view="realtor" />
               </RequireAuth>
             </Suspense>
+          }
+        />
+        <Route
+          path="/map/:mapId/viewing"
+          element={
+            <RequireAuth role="realtor">
+              <OpenViewingPage />
+            </RequireAuth>
           }
         />
         <Route
