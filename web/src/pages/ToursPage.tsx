@@ -82,7 +82,7 @@ export function ToursPage() {
           <h1 className="text-[38px] font-bold leading-[1.1] tracking-[-0.03em] sm:text-[52px] sm:leading-[60px]">
             <span className="flex items-center gap-3 sm:gap-4">
               Tour
-              <WordCarousel fontSize={38} className="sm:hidden" />
+              <WordCarousel fontSize={38} className="inline-block sm:hidden" />
               <WordCarousel fontSize={52} className="hidden sm:inline-block" />
             </span>
             <span className="block">from anywhere, anytime.</span>
