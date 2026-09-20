@@ -92,6 +92,19 @@ it('setup selects a robot by code and reads its recorder without treating the sa
   expect(mocks.session).toHaveBeenCalledTimes(1)
 })
 
+it('keeps the demo buttons and the right-arm camera off robots that are not 0188', async () => {
+  mocks.session.mockResolvedValue({ roomId: '0187', robotRole: 'mobile' })
+  render(<MemoryRouter><RobotCameraPanel setup={false} /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Robot access code'), { target: { value: '0187' } })
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }))
+  await waitFor(() => expect(mocks.session).toHaveBeenCalled())
+  await screen.findByRole('button', { name: 'Enable drive' })
+  for (const name of ['Initialize (guided)', 'Go', 'Stop', 'Right-arm camera']) {
+    expect(screen.queryByRole('button', { name })).toBeNull()
+  }
+  expect(mocks.runScript).not.toHaveBeenCalled()
+})
+
 it('can reconnect when the robot disappears without a connection error', async () => {
   mocks.session.mockResolvedValue({ roomId: '0188', robotRole: 'act' })
   render(<MemoryRouter><RobotCameraPanel setup={false} /></MemoryRouter>)

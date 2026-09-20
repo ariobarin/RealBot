@@ -39,7 +39,11 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
   const [actionError, setActionError] = useState('')
   const [scriptStatus, setScriptStatus] = useState('')
   const [armCameraOpen, setArmCameraOpen] = useState(false)
-  const viewingHand = !!freeCam?.viewing
+  // 0188 is the only ACT robot, and its right arm belongs to the policy, so it has no
+  // right-hand Free Cam and no coordinated arm control. `hand` drops that state entirely.
+  const actRobot = robotRole === 'act' && (connectedRobot || roomId) === '0188'
+  const hand = actRobot ? null : freeCam
+  const viewingHand = !!hand?.viewing
   const video = useRef<HTMLVideoElement>(null)
   const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
   const readActionPoints = useCallback(() => client.readActionPoints(), [client])
@@ -109,7 +113,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         <div>
           <h1 className="text-2xl font-semibold">{connectedRobot || roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
           <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.'
-            : actions?.state.available ? 'Position at the box, then press Run ACT. Press Stop / hold when it opens.'
+            : actRobot ? 'Initialize (guided), then Go. Press Stop once the box opens.'
               : 'Saved action locations appear in the camera view.'}</p>
         </div>
         {!embedded && !setup && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
@@ -158,7 +162,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
               className="w-[200%] max-w-none"
             />}
             {livekit && <ActionLocations client={client} view={actions}
-              disabled={viewingHand || !!(freeCam?.available && freeCam.phase !== 'idle') || !view.camera} />}
+              disabled={viewingHand || !!(hand?.available && hand.phase !== 'idle') || !view.camera} />}
             {livekit && !view.camera && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-sm text-white">
               <p>{view.error || (view.connection === 'connected' && !view.robotOnline
                 ? 'Robot offline. Turn it on, then reconnect.' : 'Connecting camera…')}</p>
@@ -166,7 +170,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
                 setDriving(false); setAttempt((value) => value + 1)
               }}>Reconnect</button>
             </div>}
-            {robotRole !== 'act' && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[68%] min-w-64 max-w-144">
+            {!actRobot && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[68%] min-w-64 max-w-144">
               <LiveSlamMap snapshot={livekit ? map : undefined} />
             </div>}
           </div>
@@ -179,10 +183,10 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
       </div>
       {armCameraOpen && <ArmCameraPopup track={view.rightCamera} fresh={!!view.rightCameraFresh && view.robotOnline}
         onClose={() => setArmCameraOpen(false)} onStop={() => void runScript('stop', 'Stop')} />}
-      {livekit && (robotRole === 'act' || actions?.state.available) && <button
+      {livekit && actRobot && <button
         className="mt-2 self-end rounded-xl border border-line px-4 py-2 text-sm"
         onClick={() => setArmCameraOpen(true)}>Right-arm camera</button>}
-      {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 flex-wrap items-center gap-3 text-sm">
+      {actRobot ? <footer className="mt-4 flex shrink-0 flex-wrap items-center gap-3 text-sm">
         <p role="status">{scriptStatus || 'Initialize (guided) homes the arms and starts teleop, Go runs the policy, Stop holds it. The base stays stationary.'}</p>
         <button className="rounded-xl border border-line px-5 py-2 disabled:opacity-40"
           disabled={actionPending || !view.robotOnline}
@@ -195,12 +199,12 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
         {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
       </footer> : <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>
-        {livekit ? <RemoteFreeCam client={client} state={actions?.state.owned ? null : freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
+        {livekit ? <RemoteFreeCam client={client} state={actions?.state.owned ? null : hand} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
           setDriving(false)
           setDriveStatus('Drive stopped for Free Cam')
         }} />}
         <button
-          disabled={!driving && (robotRole !== 'mobile' || actions?.state.owned || failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
+          disabled={!driving && (robotRole !== 'mobile' || actions?.state.owned || failed || viewingHand || (hand?.available && hand.phase !== 'idle') || (livekit && !view.camera))}
           className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
           onClick={() => {
             setDriveStatus(driving ? 'Drive stopped' : 'Connecting drive…')
