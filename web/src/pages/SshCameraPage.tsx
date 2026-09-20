@@ -21,7 +21,7 @@ export function SshCameraPage({ setup = false }: { setup?: boolean }) {
 export function RobotCameraPanel({ robotId, embedded = false, setup = false }: { robotId?: string; embedded?: boolean; setup?: boolean }) {
   const params = useParams()
   const roomId = robotId || params.roomId
-  const [accessCode, setAccessCode] = useState(visitorAccessCode)
+  const [accessCode, setAccessCode] = useState(() => visitorAccessCode(roomId))
   const [robotRole, setRobotRole] = useState<'mobile' | 'act' | null>(null)
   const [connectionError, setConnectionError] = useState('')
   const [attempt, setAttempt] = useState(0)

@@ -39,7 +39,6 @@ export function ToursPage() {
   const navigate = useNavigate()
   const [code, setCode] = useState(() => liveRobot ? '' : localStorage.getItem('realbot-room') || 'demo-bot')
   const [joining, setJoining] = useState(false)
-  const [robot, setRobot] = useState('both')
   const [joinError, setJoinError] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [now] = useState(() => Date.now())
@@ -59,8 +58,8 @@ export function ToursPage() {
     setJoining(true)
     try {
       if (liveRobot) {
-        const session = await requestVisitorSession(value, robot === 'both' ? '0187' : robot)
-        join(robot === 'both' ? 'both' : session.roomId)
+        const session = await requestVisitorSession(value)
+        join(session.roomId)
       } else join(value)
     } catch (error) {
       setJoinError(error instanceof Error ? error.message : 'Unable to join')
@@ -100,7 +99,7 @@ export function ToursPage() {
         >
           <h2 className="text-[22px] font-bold tracking-tight">Have an access code?</h2>
           <p className="-mt-2 text-sm leading-snug text-ink-2">
-            {liveRobot ? 'Enter your private robot access code to connect. No account or signup required.'
+            {liveRobot ? 'Enter your robot access code to connect. No account or signup required.'
               : 'Your realtor sends one for private tours. For the prototype, try demo-bot.'}
           </p>
           <label htmlFor="room-id" className="text-[13px] font-semibold">
@@ -114,13 +113,6 @@ export function ToursPage() {
               className={inputClass}
             />
           </label>
-          {liveRobot && <label className="text-[13px] font-semibold">Demo robot
-            <select className={inputClass} value={robot} onChange={(event) => setRobot(event.target.value)}>
-              <option value="both">Both robots together</option>
-              <option value="0187">0187 · Driving / Free Cam</option>
-              <option value="0188">0188 · Stationary ACT</option>
-            </select>
-          </label>}
           {joinError && <p role="alert" className="text-sm text-red-700">{joinError}</p>}
           <Button type="submit" className="h-[52px] w-full justify-center text-base" disabled={!code.trim() || joining}>
             {joining ? 'Connecting…' : 'Join tour'} <ArrowRight size={18} />

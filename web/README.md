@@ -55,18 +55,18 @@ This localhost token handoff is a development demo, not production guest authori
 
 Deploy from the repository root with `vercel --prod`. Set `VITE_ROBOT_TRANSPORT=livekit`,
 `LIVEKIT_VISITOR_SESSIONS` to an array of private browser-session JSON objects, each with
-`visitorRoomId` and `robotRole` (`mobile` for 0187, `act` for 0188),
-and `LIVEKIT_ACCESS_CODE_SHA256` to the SHA-256 hex digest of a randomly generated access code.
-The latter two are server-only sensitive environment variables. The LiveKit signing secret
-stays off Vercel. Visitors enter the private access code once on the home page; the server
-selects its authorized robot. Invalid codes stay on the form. Reconnect reuses the code
+`visitorRoomId` and `robotRole` (`mobile` for 0187, `act` for 0188).
+The session registry is a server-only sensitive environment variable. The LiveKit signing secret
+stays off Vercel. For this demo, visitors enter `0187` or `0188` as the access code;
+the server returns only that robot's session. Invalid codes stay on the form. Reconnect reuses the code
 in memory; refreshing or closing the app requires entering it again.
 The API rejects missing/wrong codes, other robots, and expired sessions. Renew the existing
 robot/browser credential pair and update the Vercel session environment before redeploying.
 This is a single-controller, expiring demo; the planned guest-invitation service is separate.
 
 Each robot must have a different LiveKit room and its own matching robot/browser tokens.
-The access-code form offers either robot or **Both robots together** at `/user/both`.
+The home form opens the robot selected by its code, with no robot selector.
+The **Both robots** link opens `/user/both`, where each robot requires its own code.
 That page keeps two independent connections alive; each robot still has one controller.
 An expired or disconnected robot does not end the other connection. The legacy singular
 `LIVEKIT_VISITOR_SESSION` variable remains a fallback when no registry is configured.
