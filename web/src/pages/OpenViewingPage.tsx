@@ -243,13 +243,6 @@ export function OpenViewingPage() {
                   </p>
                 </div>
               </div>
-              <div className="rounded-[20px] bg-bg-soft p-5">
-                <p className="text-[15px] font-bold">Prototype link</p>
-                <p className="mt-1 text-[13px] leading-relaxed text-ink-2">
-                  The generated visitor link is a placeholder for now. Publishing and saved availability will
-                  be connected later.
-                </p>
-              </div>
             </aside>
           </div>
         )}
