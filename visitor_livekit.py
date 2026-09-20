@@ -152,7 +152,7 @@ async def maps(room, http, controller):
         await asyncio.sleep(1)
 
 
-async def run(config, freecam_path=None):
+async def run(config, freecam_path=None, stationary=False):
     from livekit import rtc
     from bbos.daemons.remote_session import session as media
 
@@ -193,7 +193,7 @@ async def run(config, freecam_path=None):
     room.on('data_received', received)
 
     async def start(data):
-        if config.mode != 'drive':
+        if config.mode != 'drive' or stationary:
             raise ValueError('Driving is disabled for this session')
         try:
             async with control_lock:
@@ -213,7 +213,7 @@ async def run(config, freecam_path=None):
         return '{}'
 
     async def freecam_command(data):
-        if not freecam or config.mode != 'drive':
+        if not freecam or config.mode != 'drive' or stationary:
             raise ValueError('Free Cam unavailable for this session')
         async with control_lock:
             if actions.owned:
@@ -274,9 +274,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--free-cam', type=Path, help='Private local Free Cam connection JSON')
+    parser.add_argument('--stationary', action='store_true', help='Disable base driving and Free Cam')
     args = parser.parse_args()
     try:
-        asyncio.run(run(DemoConfig.load(args.config), args.free_cam))
+        asyncio.run(run(DemoConfig.load(args.config), args.free_cam, args.stationary))
     except Exception as error:
         print(f'LiveKit session ended: {type(error).__name__}', flush=True)
         raise SystemExit(1) from None

@@ -89,3 +89,18 @@ def test_missing_heartbeat_expires_local_lease(tmp_path):
     relay.receive('visitor', json.dumps({'attempt': 'one', 'sequence': 1,
                   'expiresAt': int(time.time() * 1000) + 500}))
     assert VisitorControl(relay.path).read() == ''
+
+
+def test_explicit_run_button_uses_same_policy_without_a_visible_marker(tmp_path):
+    async def run():
+        relay = ActionRelay('visitor', tmp_path)
+        relay.enabled = relay.owned = True
+        keyboard = type('Keyboard', (), {'stop': AsyncMock()})()
+        data = json.loads(message())
+        data['id'] = 'policy:electric_box'
+        health = {'status': 'running', 'source_timestamp_ns': time.time_ns(), 'visible_actions': []}
+        await relay.command('visitor', json.dumps(data), health, keyboard, None)
+        assert VisitorControl(relay.path).read() == 'one'
+        relay.stop()
+        assert VisitorControl(relay.path).read() == ''
+    asyncio.run(run())

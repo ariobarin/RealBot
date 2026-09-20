@@ -1,6 +1,6 @@
 import { AnimatePresence } from 'framer-motion'
 import { Suspense, lazy, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { LibraryPage } from './pages/LibraryPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
@@ -16,10 +16,13 @@ const ControlPage = lazy(() => import('./pages/ControlPage').then((m) => ({ defa
 const LiveTelemetryPage = lazy(() => import('./pages/LiveTelemetryPage').then((m) => ({ default: m.LiveTelemetryPage })))
 const LiveDrivePage = lazy(() => import('./pages/LiveDrivePage').then((m) => ({ default: m.LiveDrivePage })))
 const SshCameraPage = lazy(() => import('./pages/SshCameraPage').then((m) => ({ default: m.SshCameraPage })))
+const DualRobotPage = lazy(() => import('./pages/DualRobotPage').then((m) => ({ default: m.DualRobotPage })))
 const sshCameraEnabled = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
   || (import.meta.env.DEV && import.meta.env.VITE_ROBOT_TRANSPORT === 'ssh')
 
 function VisitorControl() {
+  const { roomId } = useParams()
+  if (sshCameraEnabled && roomId === 'both') return <DualRobotPage />
   if (sshCameraEnabled) return <SshCameraPage />
   return import.meta.env.VITE_ROBOT_TRANSPORT === 'relay' ? <ControlPage view="user" /> : <LiveDrivePage />
 }

@@ -14,8 +14,14 @@ import { requestVisitorSession, visitorAccessCode } from '../lib/visitorSession'
 const livekit = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
 
 export function SshCameraPage() {
-  const { roomId } = useParams()
-  const [accessCode, setAccessCode] = useState(() => visitorAccessCode(roomId))
+  return <PageShell wide viewport><RobotCameraPanel /></PageShell>
+}
+
+export function RobotCameraPanel({ robotId, embedded = false }: { robotId?: string; embedded?: boolean }) {
+  const params = useParams()
+  const roomId = robotId || params.roomId
+  const [accessCode, setAccessCode] = useState(visitorAccessCode)
+  const [robotRole, setRobotRole] = useState<'mobile' | 'act' | null>(null)
   const [connectionError, setConnectionError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [failed, setFailed] = useState(false)
@@ -25,9 +31,18 @@ export function SshCameraPage() {
   const [map, setMap] = useState<MapSnapshot | null>(null)
   const [freeCam, setFreeCam] = useState<FreeCamState | null>(null)
   const [actions, setActions] = useState<ActionView | null>(null)
+  const [actionPending, setActionPending] = useState(false)
+  const [actionError, setActionError] = useState('')
   const viewingHand = !!freeCam?.viewing
   const video = useRef<HTMLVideoElement>(null)
   const [client] = useState(() => new VisitorLiveKit(setView, setMap, setFreeCam, setActions))
+  async function runPolicy() {
+    setActionPending(true)
+    setActionError('')
+    try { await client.startAction('policy:electric_box') }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not start ACT') }
+    finally { setActionPending(false) }
+  }
   const changeView = useCallback((_viewing: boolean) => {
     setDriving(false)
     setDriveStatus('Drive stopped')
@@ -41,10 +56,15 @@ export function SshCameraPage() {
       ? requestVisitorSession(accessCode, roomId, abort.signal)
       : fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store' }).then(async (response) => {
         if (!response.ok) throw new Error('Robot session unavailable')
-        return parseViewerSession(await response.json())
+        return { ...parseViewerSession(await response.json()), robotRole: roomId === '0188' ? 'act' as const : 'mobile' as const }
       })
     session
-      .then((session) => { if (!abort.signal.aborted) return connection.connect(session) })
+      .then((session) => {
+        if (!abort.signal.aborted) {
+          setRobotRole(session.robotRole)
+          return connection.connect(session)
+        }
+      })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) {
           setConnectionError(error instanceof Error ? error.message : 'Robot session unavailable')
@@ -68,15 +88,16 @@ export function SshCameraPage() {
   }, [driving, client])
 
   return (
-    <PageShell wide viewport>
+    <section aria-label={`Robot ${roomId}`} className="flex min-h-0 flex-1 flex-col">
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
+          <h1 className="text-2xl font-semibold">{roomId} · {viewingHand ? 'Right-hand Free Cam' : view.camera ? 'Live camera' : 'Connect to robot'}</h1>
           <p className="mt-1 text-sm text-ink-2">{viewingHand ? 'Move the camera with coordinated arm control.'
             : actions?.state.available ? 'Position at the box, then click its circle to open it. Stop when it opens.'
               : 'Saved action locations appear in the camera view.'}</p>
         </div>
-        <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>
+        {!embedded && <Link to="/user/both" className="text-sm underline underline-offset-4">Both robots</Link>}
+        {!embedded && <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>}
       </header>
       {livekit && import.meta.env.PROD && !accessCode ? (
         <form className="m-auto flex w-full max-w-sm flex-col gap-4" onSubmit={(event) => {
@@ -122,27 +143,34 @@ export function SshCameraPage() {
                 setDriving(false); setAttempt((value) => value + 1)
               }}>Reconnect</button>}
             </div>}
-            {!viewingHand && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[34%] min-w-32 max-w-72">
+            {!viewingHand && robotRole !== 'act' && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[34%] min-w-32 max-w-72">
               <LiveSlamMap snapshot={livekit ? map : undefined} />
             </div>}
           </div>
         </div>
       )}
-      <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+      {robotRole === 'act' ? <footer className="mt-4 flex shrink-0 items-center gap-3 text-sm">
+        <p role="status">{actions?.state.available ? 'Click the electrical-box circle to run. The base stays stationary.' : 'Connecting action controls…'}</p>
+        <button className="rounded-xl border border-line px-5 py-2" onClick={() => client.stopAction()}>Stop / hold</button>
+        <button className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
+          disabled={actionPending || !view.robotOnline || !actions?.state.available || ['running', 'loading', 'error'].includes(actions.state.phase)}
+          onClick={() => void runPolicy()}>Run ACT</button>
+        {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
+      </footer> : <footer className="mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-ink-2">{driveStatus}</p>
         {livekit ? <RemoteFreeCam client={client} state={actions?.state.owned ? null : freeCam} onViewing={changeView} /> : <FreeCamButton onOpen={() => {
           setDriving(false)
           setDriveStatus('Drive stopped for Free Cam')
         }} />}
         <button
-          disabled={!driving && (actions?.state.owned || failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
+          disabled={!driving && (robotRole !== 'mobile' || actions?.state.owned || failed || viewingHand || (freeCam?.available && freeCam.phase !== 'idle') || (livekit && !view.camera))}
           className="rounded-xl bg-ink px-5 py-2 text-white disabled:opacity-40"
           onClick={() => {
             setDriveStatus(driving ? 'Drive stopped' : 'Connecting drive…')
             setDriving(!driving)
           }}
         >{driving ? 'Stop driving' : 'Enable drive'}</button>
-      </footer>
-    </PageShell>
+      </footer>}
+    </section>
   )
 }

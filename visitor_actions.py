@@ -68,7 +68,7 @@ class ActionRelay:
                 or not 0 <= time.time_ns() - health.get('source_timestamp_ns', 0) < 750_000_000):
             raise ValueError('Camera or action locations are stale')
         point = next((p for p in health.get('visible_actions', []) if p['id'] == message.get('id')), None)
-        if not point or point['action_id'] != 'electric_box':
+        if message.get('id') != 'policy:electric_box' and (not point or point['action_id'] != 'electric_box'):
             raise ValueError('This visible location has no trained policy')
         if freecam and (freecam.nonce or freecam.state.get('phase') != 'idle'):
             raise ValueError('Release Free Cam before running an action')

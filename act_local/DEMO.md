@@ -63,6 +63,8 @@ The LiveKit visitor page can start this policy by clicking a saved **Electric bo
 It is enabled only on 0188 when the checkpoint is installed. Position the robot and arms
 at the box first: this starts from the current pose, without navigation, homing, or a reset ramp.
 Other action types stay disabled until they have a policy.
+The stationary 0188 panel also has **Run ACT**, which runs the same electrical-box policy
+without selecting a saved location, and **Stop / hold**. Both use the same controller.
 
 Deploy the updated `hand_tracking.py`, `visitor_livekit.py`, `visitor_actions.py`,
 `act_local/live2.py`, and `act_local/visitor_control.py` with the visitor bridge.
