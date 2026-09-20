@@ -166,7 +166,7 @@ export function RobotCameraPanel({ robotId, embedded = false, setup = false }: {
                 setDriving(false); setAttempt((value) => value + 1)
               }}>Reconnect</button>
             </div>}
-            {robotRole !== 'act' && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[34%] min-w-32 max-w-72">
+            {robotRole !== 'act' && <div className="absolute bottom-3 right-3 aspect-[4/3] w-[68%] min-w-64 max-w-144">
               <LiveSlamMap snapshot={livekit ? map : undefined} />
             </div>}
           </div>
