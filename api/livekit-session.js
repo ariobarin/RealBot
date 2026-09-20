@@ -20,11 +20,11 @@ module.exports = function session(request, response) {
         || Date.now() >= session.expiresAt * 1000 || !session.token
         || !session.visitorRoomId || !session.robotIdentity
         || !session.url?.startsWith('wss://')) throw new Error('Unavailable')
-    if (request.body.roomId !== session.visitorRoomId) {
+    if (request.body.roomId !== undefined && request.body.roomId !== session.visitorRoomId) {
       return response.status(403).json({ error: 'This code does not allow that robot' })
     }
     return response.status(200).json({
-      url: session.url, token: session.token, robotIdentity: session.robotIdentity,
+      url: session.url, token: session.token, robotIdentity: session.robotIdentity, roomId: session.visitorRoomId,
     })
   } catch {
     return response.status(503).json({ error: 'Robot session expired or unavailable' })

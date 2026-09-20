@@ -24,8 +24,9 @@ test('only an authorized unexpired robot session releases its scoped token', () 
   const request = { accessCode: 'private-test-code', roomId: '0188' }
   assert.equal(call({ ...request, roomId: '0187' }).code, 403)
   assert.deepEqual(call(request).body, {
-    url: session.url, token: session.token, robotIdentity: session.robotIdentity,
+    url: session.url, token: session.token, robotIdentity: session.robotIdentity, roomId: '0188',
   })
+  assert.equal(call({ accessCode: request.accessCode }).body.roomId, '0188')
   for (const invalid of ['{}', 'invalid json', JSON.stringify({ ...session, expiresAt: 1 })]) {
     process.env.LIVEKIT_VISITOR_SESSION = invalid
     assert.equal(call(request).code, 503)

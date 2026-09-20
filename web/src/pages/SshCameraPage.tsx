@@ -6,12 +6,13 @@ import { LiveSlamMap, type MapSnapshot } from '../components/map/LiveSlamMap'
 import { VisitorLiveKit } from '../lib/visitorLiveKit'
 import type { LiveView } from '../lib/liveTelemetryClient'
 import { parseViewerSession } from '../lib/liveTelemetry'
+import { requestVisitorSession, visitorAccessCode } from '../lib/visitorSession'
 
 const livekit = import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
 
 export function SshCameraPage() {
   const { roomId } = useParams()
-  const [accessCode, setAccessCode] = useState('')
+  const [accessCode, setAccessCode] = useState(() => visitorAccessCode(roomId))
   const [connectionError, setConnectionError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [failed, setFailed] = useState(false)
@@ -27,22 +28,20 @@ export function SshCameraPage() {
     const abort = new AbortController()
     const connection = new VisitorLiveKit(setView, setMap)
     client.current = connection
-    fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store',
-      ...(import.meta.env.PROD ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessCode, roomId }) } : {}),
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          const detail = await response.json().catch(() => null)
-          throw new Error(detail?.error || 'Robot session unavailable')
-        }
+    const session = import.meta.env.PROD
+      ? requestVisitorSession(accessCode, roomId, abort.signal)
+      : fetch('/api/livekit-session', { signal: abort.signal, cache: 'no-store' }).then(async (response) => {
+        if (!response.ok) throw new Error('Robot session unavailable')
         return parseViewerSession(await response.json())
       })
+    session
       .then((session) => { if (!abort.signal.aborted) return connection.connect(session) })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) {
           setConnectionError(error instanceof Error ? error.message : 'Robot session unavailable')
-          setFailed(true)
+          if (error instanceof Error && (error.cause === 401 || error.cause === 403)) {
+            setAccessCode('')
+          } else setFailed(true)
         }
       })
     return () => { abort.abort(); connection.disconnect(); client.current = null }
@@ -63,7 +62,7 @@ export function SshCameraPage() {
     <PageShell wide viewport>
       <header className="mb-4 flex shrink-0 items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Live camera</h1>
+          <h1 className="text-2xl font-semibold">{view.camera ? 'Live camera' : 'Connect to robot'}</h1>
           <p className="mt-1 text-sm text-ink-2">Saved action locations appear in the camera view.</p>
         </div>
         <Link to="/" className="text-sm underline underline-offset-4">Leave tour</Link>
@@ -72,12 +71,14 @@ export function SshCameraPage() {
         <form className="m-auto flex w-full max-w-sm flex-col gap-4" onSubmit={(event) => {
           event.preventDefault()
           setFailed(false)
+          setConnectionError('')
           setAccessCode(String(new FormData(event.currentTarget).get('accessCode') || '').trim())
         }}>
           <label className="text-sm">Robot access code
             <input name="accessCode" type="password" required autoComplete="off"
               className="mt-2 block w-full rounded-xl border border-line p-3" />
           </label>
+          {connectionError && <p role="alert" className="text-sm text-red-700">{connectionError}</p>}
           <button className="rounded-xl bg-ink px-5 py-2 text-white">Connect</button>
         </form>
       ) : failed ? (
@@ -85,9 +86,11 @@ export function SshCameraPage() {
           <p>{connectionError || 'The camera connection is unavailable.'}</p>
           <button className="mt-4 rounded-xl bg-ink px-5 py-2 text-white" onClick={() => {
             setFailed(false)
-            if (import.meta.env.PROD) setAccessCode('')
             setAttempt((value) => value + 1)
           }}>Reconnect</button>
+          {import.meta.env.PROD && <button className="ml-3 text-sm underline" onClick={() => {
+            setFailed(false); setAccessCode(''); setConnectionError('')
+          }}>Change access code</button>}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center [container-type:size]">

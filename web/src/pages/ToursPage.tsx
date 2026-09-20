@@ -10,6 +10,7 @@ import { Button } from '../components/ui/Button'
 import { TopNav } from '../components/ui/TopNav'
 import { pageVariants, staggerList } from '../lib/motion'
 import { OPEN_TOURS, type OpenTour } from '../lib/openTours'
+import { requestVisitorSession } from '../lib/visitorSession'
 
 type Filter = 'all' | 'today' | 'week'
 
@@ -20,6 +21,7 @@ const filters: { id: Filter; label: string }[] = [
 ]
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const liveRobot = import.meta.env.PROD && import.meta.env.VITE_ROBOT_TRANSPORT === 'livekit'
 
 function matches(tour: OpenTour, filter: Filter, now: number) {
   if (filter === 'all' || tour.live) return true
@@ -35,7 +37,9 @@ const inputClass =
 export function ToursPage() {
   const { loginVisitor } = useAuth()
   const navigate = useNavigate()
-  const [code, setCode] = useState(() => localStorage.getItem('realbot-room') || 'demo-bot')
+  const [code, setCode] = useState(() => liveRobot ? '' : localStorage.getItem('realbot-room') || 'demo-bot')
+  const [joining, setJoining] = useState(false)
+  const [joinError, setJoinError] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [now] = useState(() => Date.now())
   const [booking, setBooking] = useState<OpenTour | null>(null)
@@ -46,10 +50,17 @@ export function ToursPage() {
     void navigate(`/user/${encodeURIComponent(roomId)}`)
   }
 
-  const submitCode = (event: FormEvent) => {
+  const submitCode = async (event: FormEvent) => {
     event.preventDefault()
-    const room = code.trim()
-    if (room) join(room)
+    const value = code.trim()
+    if (!value || joining) return
+    setJoinError('')
+    setJoining(true)
+    try {
+      join(liveRobot ? (await requestVisitorSession(value)).roomId : value)
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : 'Unable to join')
+    } finally { setJoining(false) }
   }
 
   const openTour = (tour: OpenTour) => {
@@ -85,21 +96,23 @@ export function ToursPage() {
         >
           <h2 className="text-[22px] font-bold tracking-tight">Have an access code?</h2>
           <p className="-mt-2 text-sm leading-snug text-ink-2">
-            Your realtor sends one for private tours — no account or signup required. For the prototype, try
-            demo-bot.
+            {liveRobot ? 'Enter your private robot access code to connect. No account or signup required.'
+              : 'Your realtor sends one for private tours. For the prototype, try demo-bot.'}
           </p>
           <label htmlFor="room-id" className="text-[13px] font-semibold">
             Access code
             <input
               id="room-id"
+              type={liveRobot ? 'password' : 'text'}
               value={code}
               onChange={(event) => setCode(event.target.value)}
               autoComplete="off"
               className={inputClass}
             />
           </label>
-          <Button type="submit" className="h-[52px] w-full justify-center text-base" disabled={!code.trim()}>
-            Join tour <ArrowRight size={18} />
+          {joinError && <p role="alert" className="text-sm text-red-700">{joinError}</p>}
+          <Button type="submit" className="h-[52px] w-full justify-center text-base" disabled={!code.trim() || joining}>
+            {joining ? 'Connecting…' : 'Join tour'} <ArrowRight size={18} />
           </Button>
           <div className="flex items-center gap-3 text-[13px] text-ink-3">
             <span className="h-px flex-1 bg-line" />

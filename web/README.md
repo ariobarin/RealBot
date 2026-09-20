@@ -57,7 +57,9 @@ Deploy from the repository root with `vercel --prod`. Set `VITE_ROBOT_TRANSPORT=
 `LIVEKIT_VISITOR_SESSION` to the private browser-session JSON plus `visitorRoomId: "0188"`,
 and `LIVEKIT_ACCESS_CODE_SHA256` to the SHA-256 hex digest of a randomly generated access code.
 The latter two are server-only sensitive environment variables. The LiveKit signing secret
-stays off Vercel. Visitors enter the robot ID on the home page, then the private robot code.
+stays off Vercel. Visitors enter the private access code once on the home page; the server
+selects its authorized robot. Invalid codes stay on the form. Reconnect reuses the code
+in memory; refreshing or closing the app requires entering it again.
 The API rejects missing/wrong codes, other robots, and expired sessions. Renew the existing
 robot/browser credential pair and update the Vercel session environment before redeploying.
 This is a single-controller, expiring demo; the planned guest-invitation service is separate.
