@@ -2,6 +2,8 @@ import asyncio
 import contextlib
 import math
 import sys
+import time
+import pytest
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -65,6 +67,7 @@ class FakeReader:
         self.reads += 1
         if self.reads > 1:
             self.data = {"state": b"reached", "reason": b""}
+        self.data["timestamp"] = time.time_ns()
         return True
 
     def __exit__(self, *args: object) -> None:
@@ -96,4 +99,35 @@ def test_adapter_waits_for_bbos_reached_and_releases_writer() -> None:
         assert writers[0].closed
         assert readers[0].closed
 
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_previous_reached_state_cannot_complete_new_route(stale):
+    class PreviousRoute(FakeReader):
+        def ready(self):
+            self.data = {"state": b"reached", "reason": b"", "timestamp": 1 if stale else time.time_ns()}
+            return True
+
+    async def scenario():
+        fake = SimpleNamespace(Reader=PreviousRoute, Writer=FakeWriter, Type=lambda name: name)
+        with patch.dict(sys.modules, {"bbos": fake}):
+            adapter = BbosNavigationAdapter(poll_interval_s=.001, completion_timeout_s=.01)
+            await adapter.start("new-route", {"x": 1., "y": 1.})
+            with pytest.raises(TimeoutError):
+                await adapter.wait()
+            await adapter.stop("test_done")
+    asyncio.run(scenario())
+
+
+def test_reader_failure_releases_command_writer():
+    writer = FakeWriter()
+    def broken_reader(*args, **kwargs): raise RuntimeError("Reader unavailable")
+    async def scenario():
+        fake = SimpleNamespace(Reader=broken_reader, Writer=lambda *a, **kw: writer, Type=lambda name: name)
+        with patch.dict(sys.modules, {"bbos": fake}):
+            adapter = BbosNavigationAdapter()
+            with pytest.raises(RuntimeError, match="Reader unavailable"):
+                await adapter.start("new-route", {"x": 1., "y": 1.})
+            assert writer.closed
     asyncio.run(scenario())

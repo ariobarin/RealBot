@@ -12,6 +12,12 @@ import { useAuth } from './auth/useAuth'
 /** three.js only ships when a map is opened. */
 const MapPage = lazy(() => import('./pages/MapPage').then((m) => ({ default: m.MapPage })))
 const ControlPage = lazy(() => import('./pages/ControlPage').then((m) => ({ default: m.ControlPage })))
+const LiveTelemetryPage = lazy(() => import('./pages/LiveTelemetryPage').then((m) => ({ default: m.LiveTelemetryPage })))
+const LiveDrivePage = lazy(() => import('./pages/LiveDrivePage').then((m) => ({ default: m.LiveDrivePage })))
+
+function VisitorControl() {
+  return import.meta.env.VITE_ROBOT_TRANSPORT === 'relay' ? <ControlPage view="user" /> : <LiveDrivePage />
+}
 
 function RequireAuth({ role, children }: { role: 'realtor' | 'visitor'; children: ReactNode }) {
   const { session, isLoading } = useAuth()
@@ -32,6 +38,8 @@ export default function App() {
         <Route path="/signin" element={<RealtorSignInPage />} />
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/connect" element={<Navigate to="/" replace />} />
+        <Route path="/realtor/live/:roomId" element={<Suspense fallback={null}><RequireAuth role="realtor"><LiveTelemetryPage /></RequireAuth></Suspense>} />
+        <Route path="/user/:roomId/live" element={<Suspense fallback={null}><RequireAuth role="visitor"><LiveDrivePage /></RequireAuth></Suspense>} />
         <Route path="/realtor/connect" element={<Navigate to="/signin" replace />} />
         <Route
           path="/realtor"
@@ -54,7 +62,7 @@ export default function App() {
           element={
             <Suspense fallback={null}>
               <RequireAuth role="visitor">
-                <ControlPage view="user" />
+                <VisitorControl />
               </RequireAuth>
             </Suspense>
           }
@@ -64,7 +72,7 @@ export default function App() {
           element={
             <Suspense fallback={null}>
               <RequireAuth role="visitor">
-                <ControlPage view="user" />
+                <VisitorControl />
               </RequireAuth>
             </Suspense>
           }

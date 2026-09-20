@@ -1,5 +1,9 @@
 # LiveKit architecture decision
 
+> **Active product milestone:** [Visitor camera and click-to-drive](VISITOR_DRIVING_MVP.md).
+> The read-only viewer is an integration checkpoint toward user-side video,
+> authorized navigation commands, and Stop. Realtor setup is secondary.
+
 > **Decision (2026-09-19):** RealBot will use the LiveKit transport already
 > provided by bbOS `remote_session`. The custom WebSocket relay remains a local
 > simulator and protocol test harness; it will not be deployed beside LiveKit
@@ -119,6 +123,12 @@ If bbOS maintainers expose a supported plugin/hook instead, use that hook.
    on the existing bbOS safety chain for final enforcement.
 
 ## First integration checkpoint
+
+The read-only reader, publisher coroutine, and browser viewer are now implemented.
+See [LIVEKIT_TELEMETRY_SETUP.md](LIVEKIT_TELEMETRY_SETUP.md) for the exact token
+contract, bbOS session hook, validation results, and remaining deployment steps.
+The first version combines pose/health/navigation in `realbot.telemetry` full
+snapshots; the separate command/workflow topics above remain future contracts.
 
 The first hardware milestone is intentionally read-only: a browser on a phone
 hotspot joins the same LiveKit room as the robot on property Wi-Fi, displays the

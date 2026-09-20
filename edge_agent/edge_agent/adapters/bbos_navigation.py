@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from typing import Any
 
 from ..motion import MotionInterrupted
@@ -50,6 +51,7 @@ class BbosNavigationAdapter:
         self._writer: Any | None = None
         self._reader: Any | None = None
         self._stopped = asyncio.Event()
+        self._submitted_ns = 0
 
     async def start(self, command_id: str, payload: dict[str, Any]) -> None:
         del command_id  # command IDs remain in the RealBot envelope, not bbOS topics.
@@ -62,10 +64,16 @@ class BbosNavigationAdapter:
         from bbos import Reader, Type, Writer
 
         writer = Writer("nav.command", Type("nav_command"), keeptime=False)
-        reader = Reader("nav.state", keeptime=False)
         self._writer = writer.__enter__()
-        self._reader = reader.__enter__()
+        try:
+            reader = Reader("nav.state", keeptime=False)
+            self._reader = reader.__enter__()
+        except BaseException:
+            self._writer.__exit__(None, None, None)
+            self._writer = None
+            raise
         self._stopped.clear()
+        self._submitted_ns = time.time_ns()
         with self._writer.buf() as command:
             command["enabled"] = True
             command["num_waypoints"] = 1
@@ -81,21 +89,35 @@ class BbosNavigationAdapter:
         accepted = False
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._completion_timeout_s
+        acceptance_deadline = loop.time() + 10
+        last_fresh = loop.time()
         while not self._stopped.is_set():
             if loop.time() >= deadline:
                 raise TimeoutError("bbOS navigation did not reach a terminal state")
             reader.ready()
             if reader.readable and reader.data is not None:
+                timestamp = reader.data["timestamp"]
+                timestamp = int(timestamp.astype("int64")) if hasattr(timestamp, "astype") else int(timestamp)
+                if timestamp < self._submitted_ns or not 0 <= time.time_ns() - timestamp <= 1_000_000_000:
+                    if loop.time() - last_fresh > 2:
+                        raise RuntimeError("bbOS navigation state is stale")
+                    await asyncio.sleep(self._poll_interval_s)
+                    continue
+                last_fresh = loop.time()
                 state = _text(reader.data["state"])
                 reason = _text(reader.data["reason"])
                 if state in {"navigating", "waiting_for_drive"}:
                     accepted = True
-                elif state == "reached":
+                elif state == "reached" and accepted:
                     return
                 elif state == "failed":
                     raise RuntimeError(reason or "bbOS navigation failed")
                 elif state == "idle" and accepted:
                     raise RuntimeError(reason or "bbOS navigation stopped before arrival")
+            elif loop.time() - last_fresh > 2:
+                raise RuntimeError("bbOS navigation state unavailable")
+            if not accepted and loop.time() > acceptance_deadline:
+                raise RuntimeError("bbOS did not acknowledge the new route")
             await asyncio.sleep(self._poll_interval_s)
         raise MotionInterrupted("navigation was stopped")
 

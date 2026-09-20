@@ -1,5 +1,12 @@
 # RealBot Edge Compute Plan
 
+> **Current MVP priority:** Real camera video and click-to-drive in the visitor
+> app, with Stop and authoritative navigation feedback. Follow
+> [VISITOR_DRIVING_MVP.md](VISITOR_DRIVING_MVP.md) for the active implementation
+> order. Realtor setup, following, gestures, interactions, Free Cam, and rich map
+> visualization are deferred from this milestone. The broader scope and
+> definition of done below remain later roadmap material.
+
 > **Implementation status (2026-09-19): simulator-backed foundation, not a
 > deployed robot runtime.** A read-only audit of `bracketbot-0187` confirmed
 > that bbOS already owns navigation, SLAM health, timestamp alignment,

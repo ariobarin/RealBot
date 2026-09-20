@@ -225,6 +225,9 @@ export function ControlPage({ view }: ControlPageProps) {
               >
                 <Eye size={16} /> Preview as user
               </Link>
+              <Link to={`/realtor/live/${encodeURIComponent(roomId)}`} className="inline-flex items-center gap-1 text-sm text-ink-2 no-underline">
+                <Radio size={16} /> Live robot view
+              </Link>
               <Link to="/realtor" className="inline-flex items-center gap-1 text-sm text-ink-2 no-underline">
                 <ArrowLeft size={16} /> Spaces
               </Link>

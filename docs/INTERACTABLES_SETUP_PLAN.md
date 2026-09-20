@@ -1,5 +1,9 @@
 # Interactables Setup Plan
 
+> **Priority update (2026-09-19):** This workflow is secondary to the
+> [visitor camera and click-to-drive MVP](VISITOR_DRIVING_MVP.md). Preserve these
+> requirements for later implementation; they do not gate the current MVP.
+
 ## 1. Product outcome
 
 After a realtor completes a SLAM scan, they can teach the robot where the

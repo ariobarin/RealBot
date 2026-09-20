@@ -21,6 +21,11 @@ Credentials belong in local environment variables or ignored `.env` files.
 
 ## Planning references
 
+- [`docs/VISITOR_DRIVING_MVP.md`](docs/VISITOR_DRIVING_MVP.md) defines the current
+  priority: real camera video and click-to-drive in the visitor app, with Stop.
+  The local LiveKit UI, driving protocol and floor projection are implemented;
+  the authorized session backend, bbOS host integration and supervised hardware
+  acceptance remain. Realtor setup and physical interactions follow this milestone.
 - [`docs/REALTOR_GUEST_AUTH_PLAN.md`](docs/REALTOR_GUEST_AUTH_PLAN.md) records
   the implementation decision for Supabase-backed realtor accounts and
   accountless, invitation-based visitor access. It does not cover robot

@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Robot-authoritative runtime contracts for RealBot"
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+driving = ["numpy>=1.26", "Pillow>=10"]
+
 [build-system]
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"

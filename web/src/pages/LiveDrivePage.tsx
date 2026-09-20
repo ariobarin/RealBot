@@ -1,0 +1,257 @@
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { CircleStop, Crosshair, Video } from 'lucide-react'
+import { LiveDriveClient, type DriveView } from '../lib/liveDriveClient'
+import type { LiveView } from '../lib/liveTelemetryClient'
+import { parseViewerSession } from '../lib/liveTelemetry'
+import { supabase } from '../lib/supabase'
+import { PageShell } from '../components/ui/PageShell'
+
+export function LiveDrivePage() {
+  const { roomId = '' } = useParams()
+  const [view, setView] = useState<LiveView>({
+    connection: 'disconnected',
+    robotOnline: false,
+    telemetryFresh: false,
+  })
+  const [drive, setDrive] = useState<DriveView>({
+    available: false,
+    canCapture: false,
+    busy: false,
+    status: 'Connect to see the robot.',
+  })
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const [url, setUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [identity, setIdentity] = useState('')
+  const [accessCode, setAccessCode] = useState('')
+  const client = useRef<LiveDriveClient | null>(null)
+  const request = useRef<AbortController | null>(null)
+  const video = useRef<HTMLVideoElement>(null)
+  const endpoint = import.meta.env.VITE_LIVEKIT_SESSION_ENDPOINT?.trim()
+  const manual = import.meta.env.DEV && !endpoint
+
+  useEffect(() => {
+    const instance = new LiveDriveClient(setView, setDrive)
+    client.current = instance
+    return () => {
+      request.current?.abort()
+      instance.disconnect()
+      client.current = null
+    }
+  }, [roomId])
+  useEffect(() => {
+    const element = video.current
+    const track = view.camera
+    if (!element || !track) return
+    track.attach(element)
+    return () => {
+      track.detach(element)
+      element.srcObject = null
+    }
+  }, [view.camera])
+
+  async function connect(event: FormEvent) {
+    event.preventDefault()
+    request.current?.abort()
+    const controller = new AbortController()
+    request.current = controller
+    setError('')
+    setPending(true)
+    try {
+      let session
+      if (endpoint) {
+        const target = new URL(endpoint, window.location.origin)
+        if (
+          target.protocol !== 'https:' &&
+          !(import.meta.env.DEV && target.origin === window.location.origin)
+        )
+          throw new Error('The session endpoint must use HTTPS.')
+        const auth = await supabase?.auth.getSession()
+        const bearer = auth?.data.session?.access_token
+        if (!bearer && !accessCode.trim()) throw new Error('Enter your tour access code.')
+        const response = await fetch(target, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+          },
+          body: JSON.stringify({ roomId, mode: 'drive', ...(!bearer ? { accessCode } : {}) }),
+        })
+        if (!response.ok) throw new Error(`Could not open this robot session (${response.status}).`)
+        session = parseViewerSession(await response.json())
+      } else if (manual) {
+        session = parseViewerSession({ url, token, robotIdentity: identity })
+        setToken('')
+      } else throw new Error('Robot sessions have not been configured yet.')
+      if (!controller.signal.aborted) await client.current?.connect(session)
+    } catch (err) {
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not connect.')
+    } finally {
+      if (!controller.signal.aborted) setPending(false)
+    }
+  }
+
+  const perform = (action: () => void) => {
+    setError('')
+    try {
+      action()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Command unavailable.')
+    }
+  }
+  const selectFloor = (event: MouseEvent<HTMLImageElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    // Image is rendered at its actual aspect ratio, with no object-fit crop or padding.
+    perform(() =>
+      client.current?.move(
+        (event.clientX - rect.left) / rect.width,
+        (event.clientY - rect.top) / rect.height,
+      ),
+    )
+  }
+
+  return (
+    <PageShell wide>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <Link to="/" className="text-sm text-ink-2">
+            Back to tours
+          </Link>
+          <h1 className="mt-2 text-2xl font-semibold">Explore with the robot</h1>
+        </div>
+        <span className="text-sm text-ink-2">
+          {view.connection === 'connected' && view.robotOnline ? 'Robot connected' : view.connection}
+        </span>
+      </div>
+      <form onSubmit={connect} className="my-5 flex flex-wrap items-end gap-3">
+        {manual && (
+          <>
+            <label className="text-sm">
+              LiveKit URL
+              <input
+                className="block rounded-lg border p-2"
+                required
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="wss://…"
+              />
+            </label>
+            <label className="text-sm">
+              Robot identity
+              <input
+                className="block rounded-lg border p-2"
+                required
+                value={identity}
+                onChange={(e) => setIdentity(e.target.value)}
+              />
+            </label>
+            <label className="text-sm">
+              Controller token
+              <input
+                className="block rounded-lg border p-2"
+                type="password"
+                autoComplete="off"
+                required
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
+            </label>
+          </>
+        )}
+        {endpoint && (
+          <label className="text-sm">
+            Tour access code
+            <input
+              className="block rounded-lg border p-2"
+              type="password"
+              autoComplete="off"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+            />
+          </label>
+        )}
+        <button
+          className="rounded-lg bg-ink px-4 py-2 text-white disabled:opacity-40"
+          disabled={pending || view.connection !== 'disconnected' || (!endpoint && !manual)}
+        >
+          Connect
+        </button>
+        {view.connection !== 'disconnected' && (
+          <button
+            type="button"
+            className="rounded-lg border px-4 py-2"
+            onClick={() => {
+              request.current?.abort()
+              setPending(false)
+              client.current?.disconnect()
+            }}
+          >
+            Disconnect
+          </button>
+        )}
+      </form>
+      {!endpoint && !manual && <p role="status">Robot sessions have not been configured yet.</p>}
+      {(error || view.error) && (
+        <p role="alert" className="my-3 text-red-700">
+          {error || view.error}
+        </p>
+      )}
+      <div className="relative grid min-h-72 place-items-center overflow-hidden rounded-2xl bg-black">
+        <video
+          ref={video}
+          autoPlay
+          playsInline
+          muted
+          className="max-h-[65vh] w-full object-contain"
+          hidden={!view.camera || !!drive.capture}
+        />
+        {drive.capture && (
+          <img
+            src={drive.capture.image}
+            alt="Captured camera view: click a clear floor destination"
+            onClick={selectFloor}
+            draggable={false}
+            className="block h-auto max-h-[65vh] max-w-full cursor-crosshair"
+          />
+        )}
+        {!view.camera && !drive.capture && (
+          <div className="flex items-center gap-3 p-16 text-white/70">
+            <Video size={22} />
+            Waiting for the robot camera
+          </div>
+        )}
+      </div>
+      <div className="my-5 flex flex-wrap items-center gap-3">
+        <button
+          className="flex items-center gap-2 rounded-lg bg-ink px-5 py-3 text-white disabled:opacity-40"
+          disabled={!view.camera || !drive.canCapture || drive.busy}
+          onClick={() => perform(() => client.current?.chooseDestination())}
+        >
+          <Crosshair size={20} />
+          Choose destination
+        </button>
+        <button
+          className="flex items-center gap-2 rounded-lg bg-red-700 px-5 py-3 font-semibold text-white disabled:opacity-40"
+          disabled={!drive.available}
+          onClick={() => perform(() => client.current?.stop())}
+        >
+          <CircleStop size={20} />
+          Stop
+        </button>
+        <p role="status" className="text-sm text-ink-2">
+          {drive.status}
+        </p>
+      </div>
+      <p className="text-sm text-ink-2">
+        Choose a destination view, then click clear floor nearby. The robot checks the location before moving.
+        You can stop it at any time while connected.
+      </p>
+      <p className="mt-2 text-xs text-ink-2">
+        Live video uses the head camera. Destination selection uses a fresh depth-aligned stereo image.
+      </p>
+    </PageShell>
+  )
+}
