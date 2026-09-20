@@ -6,7 +6,8 @@
 #     Pass "here" to restart from the current pose instead of ramping back.
 cd ~/act-local
 if ! tmux has-session -t act-v3 2>/dev/null; then
-    echo "no policy session; run ~/act-local/demo.sh (fresh) or ~/act-local/demo.sh guided first"; exit 1
+    echo "no policy session: doing a cold start (demo.sh)"
+    exec ~/act-local/demo.sh
 fi
 if pgrep -f 'quest_teleop/main.py' >/dev/null; then
     pkill -KILL -f 'quest_teleop/main.py'
