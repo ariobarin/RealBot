@@ -170,6 +170,10 @@ class DrivingSession:
     async def run(self):
         try:
             while not self.closed:
+                # Python 3.11 wait_for can race with a completed publish during
+                # cancellation. Never let a consumed cancellation resume control.
+                if asyncio.current_task().cancelling():
+                    raise asyncio.CancelledError
                 ready = self.source.ready()
                 if (not self.lease_active or not ready) and (self.busy or self.capture is not None):
                     await self.stop("controller_or_localization_lost")
@@ -190,7 +194,7 @@ class DrivingSession:
 
 
 async def run_driving(room, *, controller_identity: str, legacy_teleop_disabled: bool):
-    """Host hook; controller identity MUST originate from the session backend.
+    """Host hook; controller identity comes from trusted server/operator config.
 
     Call only in a dedicated driving session whose bbos_thread does not acquire
     drive/arm writers and whose movement/manipulation/quest handlers are disabled.

@@ -21,6 +21,9 @@ Credentials belong in local environment variables or ignored `.env` files.
 
 ## Planning references
 
+- [`docs/SINGLE_USER_DEMO.md`](docs/SINGLE_USER_DEMO.md) is the current practical
+  connection path: private token generation, existing bbOS camera publisher,
+  manually started camera/driving sessions, and no multi-user backend.
 - [`docs/VISITOR_DRIVING_MVP.md`](docs/VISITOR_DRIVING_MVP.md) defines the current
   priority: real camera video and click-to-drive in the visitor app, with Stop.
   The local LiveKit UI, driving protocol and floor projection are implemented;

@@ -5,7 +5,8 @@ description = "Robot-authoritative runtime contracts for RealBot"
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-driving = ["numpy>=1.26", "Pillow>=10"]
+driving = ["numpy>=1.26", "Pillow>=10", "PyYAML>=6"]
+tokens = ["livekit-api>=1,<2", "python-dotenv>=1,<2"]
 
 [build-system]
 requires = ["setuptools>=75"]

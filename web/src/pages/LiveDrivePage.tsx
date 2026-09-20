@@ -32,6 +32,23 @@ export function LiveDrivePage() {
   const endpoint = import.meta.env.VITE_LIVEKIT_SESSION_ENDPOINT?.trim()
   const manual = import.meta.env.DEV && !endpoint
 
+  async function loadDemo(file: File | undefined) {
+    if (!file) return
+    setError('')
+    setToken('')
+    try {
+      if (file.size > 16_384) throw new Error('Demo session file is too large.')
+      const data = JSON.parse(await file.text())
+      if (data?.version !== 1 || data?.kind !== 'browser') throw new Error('Not a browser session file.')
+      const session = parseViewerSession(data)
+      setUrl(session.url)
+      setToken(session.token)
+      setIdentity(session.robotIdentity)
+    } catch {
+      setError('Could not load the browser session file. Use browser.session.json from the token generator.')
+    }
+  }
+
   useEffect(() => {
     const instance = new LiveDriveClient(setView, setDrive)
     client.current = instance
@@ -129,6 +146,19 @@ export function LiveDrivePage() {
       <form onSubmit={connect} className="my-5 flex flex-wrap items-end gap-3">
         {manual && (
           <>
+            <label className="text-sm">
+              Load demo session
+              <input
+                className="block max-w-60 p-2"
+                type="file"
+                accept=".json,application/json"
+                disabled={pending || view.connection !== 'disconnected'}
+                onChange={(event) => {
+                  void loadDemo(event.target.files?.[0])
+                  event.target.value = ''
+                }}
+              />
+            </label>
             <label className="text-sm">
               LiveKit URL
               <input

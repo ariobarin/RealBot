@@ -4,6 +4,12 @@
 > The read-only viewer is an integration checkpoint toward user-side video,
 > authorized navigation commands, and Stop. Realtor setup is secondary.
 
+> **Current one-user demo:** [SINGLE_USER_DEMO.md](SINGLE_USER_DEMO.md) uses private
+> offline-generated tokens and a manual session runner reusing the installed bbOS
+> camera publisher. It replaces the stopped legacy daemon for that session;
+> it never runs a second participant beside it. This avoids needing access to
+> Bracket Bot's hosted session backend for the supervised MVP.
+
 > **Decision (2026-09-19):** RealBot will use the LiveKit transport already
 > provided by bbOS `remote_session`. The custom WebSocket relay remains a local
 > simulator and protocol test harness; it will not be deployed beside LiveKit

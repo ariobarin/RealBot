@@ -77,6 +77,8 @@ calibration_tests/
 .env
 .env.*
 !web/.env.example
+.realbot-demo/
+*.session.json
 
 # web/ frontend (re-allow paths the robot-side rules above would swallow)
 !web/src/lib/

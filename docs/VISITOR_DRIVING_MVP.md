@@ -6,6 +6,12 @@
 > gestures, speech labeling, and physical interactions are secondary.
 > This scope takes precedence over the broader edge and interactables plans.
 
+> **Single-user simplification:** [SINGLE_USER_DEMO.md](SINGLE_USER_DEMO.md)
+> implements offline token generation and a manually started sole robot participant
+> reusing the bbOS camera publisher. The hosted backend below is a future
+> production requirement, not a blocker for the supervised development demo.
+> Physical camera and driving acceptance are still pending.
+
 ## User experience
 
 An authorized visitor opens the robot session and sees its real head-camera

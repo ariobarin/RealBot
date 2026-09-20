@@ -133,3 +133,21 @@ def test_localization_loss_and_expired_heartbeat_stop_motion():
         assert s.closed
     asyncio.run(scenario(True))
     asyncio.run(scenario(False))
+
+
+def test_session_exits_even_if_transport_swallows_cancellation():
+    async def scenario():
+        s, _, _, _ = setup()
+        publishing = asyncio.Event()
+        async def send(message):
+            publishing.set()
+            try: await asyncio.Event().wait()
+            except asyncio.CancelledError: pass  # Emulate a wait_for completion race.
+        s.send = send
+        runner = asyncio.create_task(s.run())
+        await publishing.wait()
+        runner.cancel()
+        async with asyncio.timeout(1):
+            await asyncio.gather(runner, return_exceptions=True)
+        assert s.closed
+    asyncio.run(scenario())

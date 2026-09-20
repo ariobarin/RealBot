@@ -20,6 +20,36 @@ test('visitor live view fails closed before a real session is available', async 
   await page.screenshot({ path: 'test-results/live-drive-disconnected.png', fullPage: true })
 })
 
+test('private demo session file fills the form without connecting or persisting tokens', async ({ page }) => {
+  await page.goto('/user/demo-bot/live')
+  await page.getByLabel('Load demo session').setInputFiles({
+    name: 'browser.session.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        version: 1,
+        kind: 'browser',
+        url: 'wss://test.invalid',
+        token: 'ui-fixture-token',
+        robotIdentity: 'robot',
+      }),
+    ),
+  })
+  await expect(page.getByLabel('LiveKit URL')).toHaveValue('wss://test.invalid')
+  await expect(page.getByLabel('Robot identity')).toHaveValue('robot')
+  await expect(page.getByLabel('Controller token')).toHaveValue('ui-fixture-token')
+  await expect(page.getByRole('button', { name: 'Choose destination' })).toBeDisabled()
+  expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain(
+    'ui-fixture-token',
+  )
+  await page.getByLabel('Load demo session').setInputFiles({
+    name: 'invalid.session.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{}'),
+  })
+  await expect(page.getByRole('alert')).toContainText('Could not load')
+})
+
 test('visitor can select a captured image and Stop (UI fixture, no robot connection)', async ({ page }) => {
   // Replace only the UI client boundary. Wire protocol behavior is covered by
   // liveDriveClient.test.ts; this checks actual DOM sizing, clicks and buttons.
