@@ -31,6 +31,60 @@ this application to robot hardware.
 
 ## Run
 
+For the LiveKit visitor demo, set `VITE_ROBOT_TRANSPORT=livekit` in `.env.local`
+and run `npm run dev -- --host 127.0.0.1 --port 5178`. Open `/user/0188`.
+The left head camera, action dots, transparent SLAM map, and WASD use LiveKit;
+no SSH tunnel is needed while viewing or driving.
+
+The local Vite server reads `.realbot-demo/current/browser.session.json` from
+the repository root. The matching robot credential goes in
+`~/.config/realbot/visitor.session.json` on 0188. Issue these with the existing
+`edge_agent.demo_tokens` CLI using Python 3.11, `--minutes 60 --enable-driving`,
+and a private `--env-file`; never put the signing secret in a `VITE_` variable.
+For renewal, generate into a fresh directory, replace both session files, restart
+`visitor_livekit.py --config ~/.config/realbot/visitor.session.json`, and reload.
+The bridge uses the installed bbOS remote-session Python environment via
+`edge_agent/run_robot_demo.py`'s `runtime()` helper. Keep the legacy
+`remote_session` daemon stopped and the annotated camera service on port 8006 running.
+
+Tokens and the bridge expire after 60 minutes. Drive requires a fresh enable after
+disconnect; stale commands, missing heartbeats, and browser focus loss stop it.
+This localhost token handoff is a development demo, not production guest authorization.
+
+### Vercel visitor demo
+
+Deploy from the repository root with `vercel --prod`. Set `VITE_ROBOT_TRANSPORT=livekit`,
+`LIVEKIT_VISITOR_SESSION` to the private browser-session JSON plus `visitorRoomId: "0188"`,
+and `LIVEKIT_ACCESS_CODE_SHA256` to the SHA-256 hex digest of a randomly generated access code.
+The latter two are server-only sensitive environment variables. The LiveKit signing secret
+stays off Vercel. Visitors enter the private access code once on the home page; the server
+selects its authorized robot. Invalid codes stay on the form. Reconnect reuses the code
+in memory; refreshing or closing the app requires entering it again.
+The API rejects missing/wrong codes, other robots, and expired sessions. Renew the existing
+robot/browser credential pair and update the Vercel session environment before redeploying.
+This is a single-controller, expiring demo; the planned guest-invitation service is separate.
+
+For a local visitor session on 0188, keep this tunnel running:
+
+```sh
+ssh -NT -L 127.0.0.1:18006:127.0.0.1:8006 bracketbot-0188
+```
+
+Set `VITE_ROBOT_TRANSPORT=ssh` in `.env.local`, run
+`npm run dev -- --host 127.0.0.1 --port 5178`, and join a tour from the home page.
+The visitor page shows the left stereo camera with saved action markers.
+Its read-only 3D SLAM panel refreshes once a second, previews up to 40,000 points,
+and marks the robot's position. Drag to orbit, scroll to zoom, or right-drag to pan.
+Click **Enable drive**, then hold WASD; Shift doubles the default 0.1 m/s forward
+speed. Space, Escape, Stop driving, leaving the page, or losing focus stops drive.
+After a disconnection, restore the tunnel and enable drive again.
+
+This development-only endpoint accepts the local app origin and exclusively owns
+`drive.ctrl` while enabled. It changes no base mode or arm controls. Commands arrive
+every 50 ms; the socket releases control after 250 ms without a command, and 0188's
+base daemon independently expires drive commands after 100 ms. The SSH fallback is
+for this trusted local setup, not a public visitor authorization system.
+
 Copy `.env.example` to `.env.local` and fill in the Supabase project URL and publishable key.
 Do not put a Supabase secret/service-role key in `web/`.
 
