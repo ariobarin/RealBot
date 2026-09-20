@@ -201,7 +201,7 @@ if not args.no_demo_pose and not args.hold_start:
     print('RAMPING to the demo start pose over 4 s ...', flush=True)
     ramp_to(start_pose, 4.0)
     time.sleep(.5)
-print(f'RUNNING at up to {args.hz:g} Hz for {args.duration:g}s (0=unlimited). Space/Ctrl-C pauses, R starts a fresh timed run, E cuts torque, Q parks/exits.', flush=True)
+print(f'RUNNING at up to {args.hz:g} Hz for {args.duration:g}s (0=unlimited). Space/Ctrl-C pauses, R restarts from here, N ramps back to the demo start pose and restarts, E cuts torque, Q parks/exits.', flush=True)
 started = time.monotonic()
 last_log = -1
 last_sent = None
@@ -219,6 +219,13 @@ try:
                 if key == 'q':
                     robot.disconnect()
                     break
+                if key == 'n':                       # new attempt: back to the demo start pose, then run again
+                    paused = True
+                    target = None
+                    print('NEW ATTEMPT: ramping to the demo start pose over 4 s ...', flush=True)
+                    ramp_to(start_pose, 4.0)
+                    time.sleep(.3)
+                    key, paused = 'r', True
                 if key == 'r' and paused:
                     policy.reset()
                     paused = False
